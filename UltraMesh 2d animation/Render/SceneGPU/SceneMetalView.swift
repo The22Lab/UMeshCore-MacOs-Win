@@ -41,6 +41,15 @@ struct SceneMetalView {
     let composition: SceneComposition
     let frameIndex: Int
     let frame: SceneMetalRenderer.Frame
+    /// The manipulator, if one is showing — built by
+    /// `SceneGizmoOverlay.gizmoLayout()` from the SAME state that view's own
+    /// hit-testing uses. Drawn INSIDE `Coordinator.draw(in:)`, in the same
+    /// command buffer as the picture, which is what lets it ride along with
+    /// `CanvasActivity.drawIfDisplayLinkStalled()` — see that call's own
+    /// comment in `apply(_:coordinator:)` below for why the picture needs
+    /// that hook at all, and `SceneMetalRenderer.render(...)`'s gizmo-pass
+    /// comment for the rest of the chain.
+    var gizmo: SceneGizmoLayout? = nil
 
     /// Trackpad navigation, macOS only. iPadOS routes the same gestures through
     /// `SceneInputSurface`, which owns the touches; these end in the SAME
@@ -64,6 +73,7 @@ struct SceneMetalView {
             var frame: SceneMetalRenderer.Frame
             var scene: SceneManager
             var assets: AssetManager
+            var gizmo: SceneGizmoLayout?
         }
 
         let renderer: SceneMetalRenderer
@@ -104,7 +114,8 @@ struct SceneMetalView {
                             scene: request.scene,
                             assets: request.assets,
                             into: drawable.texture,
-                            presenting: drawable)
+                            presenting: drawable,
+                            gizmo: request.gizmo)
         }
     }
 
@@ -131,7 +142,7 @@ struct SceneMetalView {
     private func apply(_ view: MTKView, coordinator: Coordinator) {
         coordinator.request = Coordinator.Request(
             composition: composition, frameIndex: frameIndex, frame: frame,
-            scene: scene, assets: assets)
+            scene: scene, assets: assets, gizmo: gizmo)
         let size = CGSize(width: max(frame.pixelSize.x, 1),
                           height: max(frame.pixelSize.y, 1))
         if view.drawableSize != size { view.drawableSize = size }

@@ -59,6 +59,15 @@ final class SceneMetalRenderer {
     private let skinnedPipeline: MTLRenderPipelineState
     private let backgroundPipeline: MTLRenderPipelineState
     private let encodePipeline: MTLRenderPipelineState
+    /// The Scene gizmo's own pipeline: real 3D geometry (cones, cylinders,
+    /// torus-tube rings), drawn straight onto `destination` after the encode
+    /// pass, in the SAME command buffer as everything else. That last part is
+    /// the whole point — see `encodeGizmoPass`'s own comment.
+    private let gizmoPipeline: MTLRenderPipelineState
+    /// Depth testing SOLELY between the gizmo's own primitives — a near ring
+    /// over a far one, a cone over its own shaft — never against the scene,
+    /// which has no depth buffer at all.
+    private let gizmoDepthState: MTLDepthStencilState
     private let atlasSampler: MTLSamplerState
     private let curveSampler: MTLSamplerState
 
@@ -115,6 +124,8 @@ final class SceneMetalRenderer {
     private var occluderBuffers: [MTLBuffer?]
     private var occluderCapacity = 0
     private var lightCapacity = 0
+    private var gizmoVertexBuffers: [MTLBuffer?]
+    private var gizmoVertexCapacity = 0
 
     /// The linear target the scene accumulates into, before the encode pass.
     ///
@@ -129,6 +140,13 @@ final class SceneMetalRenderer {
     /// The 8-bit target an export renders into before reading it back.
     /// Kept between frames because an export renders hundreds at one size.
     private var readback: MTLTexture?
+
+    /// The gizmo pass's own depth buffer. Lives only for that one pass —
+    /// `loadAction = .clear`, `storeAction = .dontCare` — so this is a
+    /// SCRATCH texture, kept between frames purely to avoid reallocating one
+    /// every draw, never read back and never shared with the scene's own
+    /// (nonexistent) depth state.
+    private var gizmoDepth: MTLTexture?
 
     /// Bound when the scene has no lights, so that `buffer(2)` and `texture(1)`
     /// are never left unset.
@@ -200,7 +218,9 @@ final class SceneMetalRenderer {
               let cardFragment = library.makeFunction(name: "sceneCardFragment"),
               let backgroundFragment = library.makeFunction(name: "sceneBackgroundFragment"),
               let encodeVertex = library.makeFunction(name: "sceneEncodeVertex"),
-              let encodeFragment = library.makeFunction(name: "sceneEncodeFragment")
+              let encodeFragment = library.makeFunction(name: "sceneEncodeFragment"),
+              let gizmoVertex = library.makeFunction(name: "sceneGizmoVertex"),
+              let gizmoFragment = library.makeFunction(name: "sceneGizmoFragment")
         else { return nil }
 
         self.device = device
@@ -253,15 +273,48 @@ final class SceneMetalRenderer {
         encodeDescriptor.fragmentFunction = encodeFragment
         encodeDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
 
+        let gizmoDescriptor = MTLRenderPipelineDescriptor()
+        gizmoDescriptor.label = "Scene gizmo"
+        gizmoDescriptor.vertexFunction = gizmoVertex
+        gizmoDescriptor.fragmentFunction = gizmoFragment
+        // DRAWS STRAIGHT ONTO `destination`, an 8-bit BGRA target — not into
+        // the HDR accumulation texture the cards draw into. The gizmo is
+        // chrome laid over the finished picture, not a surface the encode
+        // pass's clamp and tonemap should ever touch.
+        gizmoDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        gizmoDescriptor.colorAttachments[0].isBlendingEnabled = true
+        gizmoDescriptor.colorAttachments[0].rgbBlendOperation = .add
+        gizmoDescriptor.colorAttachments[0].alphaBlendOperation = .add
+        // ORDINARY SOURCE-OVER, NOT PREMULTIPLIED — unlike the card/skinned
+        // pipelines above. `SceneGizmoMeshBuilder`'s vertex colours are plain
+        // (unpremultiplied) RGB with alpha only in `.a`, which is what a
+        // colour built from `axisColor(_:)` and scaled by a highlight/away
+        // factor already is; premultiplying it would be one more step with
+        // nothing upstream that needs it.
+        gizmoDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        gizmoDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
+        gizmoDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        gizmoDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        gizmoDescriptor.depthAttachmentPixelFormat = .depth32Float
+
         guard let card = try? device.makeRenderPipelineState(descriptor: cardDescriptor),
               let skinned = try? device.makeRenderPipelineState(descriptor: skinnedDescriptor),
               let background = try? device.makeRenderPipelineState(descriptor: backgroundDescriptor),
-              let encode = try? device.makeRenderPipelineState(descriptor: encodeDescriptor)
+              let encode = try? device.makeRenderPipelineState(descriptor: encodeDescriptor),
+              let gizmo = try? device.makeRenderPipelineState(descriptor: gizmoDescriptor)
         else { return nil }
         self.cardPipeline = card
         self.skinnedPipeline = skinned
         self.backgroundPipeline = background
         self.encodePipeline = encode
+        self.gizmoPipeline = gizmo
+
+        let gizmoDepthDescriptor = MTLDepthStencilDescriptor()
+        gizmoDepthDescriptor.depthCompareFunction = .less
+        gizmoDepthDescriptor.isDepthWriteEnabled = true
+        guard let gizmoDepthState = device.makeDepthStencilState(descriptor: gizmoDepthDescriptor)
+        else { return nil }
+        self.gizmoDepthState = gizmoDepthState
 
         let atlasDescriptor = MTLSamplerDescriptor()
         atlasDescriptor.minFilter = .linear
@@ -291,6 +344,7 @@ final class SceneMetalRenderer {
         self.paletteBuffers = Array(repeating: nil, count: Self.framesInFlight)
         self.lightBuffers = Array(repeating: nil, count: Self.framesInFlight)
         self.occluderBuffers = Array(repeating: nil, count: Self.framesInFlight)
+        self.gizmoVertexBuffers = Array(repeating: nil, count: Self.framesInFlight)
     }
 
     static let accumulationFormat: MTLPixelFormat = .rgba16Float
@@ -355,7 +409,8 @@ extension SceneMetalRenderer {
                 scene: SceneManager,
                 assets: AssetManager,
                 into destination: MTLTexture,
-                presenting drawable: (any MTLDrawable)? = nil) {
+                presenting drawable: (any MTLDrawable)? = nil,
+                gizmo: SceneGizmoLayout? = nil) {
 
         inFlight.wait()
         ringIndex = (ringIndex + 1) % Self.framesInFlight
@@ -607,6 +662,22 @@ extension SceneMetalRenderer {
         encoder.endEncoding()
 
         encodePass(from: target, into: destination, commandBuffer: commandBuffer)
+
+        // THE GIZMO, LAST, IN THE SAME COMMAND BUFFER. This is the whole fix
+        // for it lagging the picture during a trackpad pinch/orbit/pan:
+        // `SceneInputMTKView.scrollWheel`/`.magnify` force a hand-drawn
+        // `view.draw()` (`CanvasActivity.drawIfDisplayLinkStalled()`) because
+        // AppKit's own modal event-tracking run loop starves both the normal
+        // display link and SwiftUI's `body` re-evaluation for the length of
+        // the gesture. That hand-drawn call flows straight into THIS
+        // function, so putting the gizmo here — rather than in a SwiftUI
+        // `Canvas` layered on top, which has no such forced-redraw hook —
+        // means it is redrawn on every one of those forced frames, with zero
+        // dependency on SwiftUI's own update cadence.
+        if let gizmo {
+            encodeGizmoPass(gizmo, into: destination, commandBuffer: commandBuffer)
+        }
+
         // PRESENTED BY THE COMMAND BUFFER, not by the caller afterwards. This
         // function owns the buffer and commits it, so a caller has nowhere to
         // put a `present` that still lands before the commit; presenting from
@@ -650,6 +721,10 @@ extension SceneMetalRenderer {
               let texture = readbackTexture(width: width, height: height)
         else { return false }
 
+        // NO `gizmo:` ARGUMENT — its default is `nil`, and that default is
+        // the whole of the guarantee that an export can never carry editor
+        // chrome. There is no flag here that could be left set by mistake;
+        // this call site simply has no gizmo to pass.
         render(composition: composition, atFrame: frameIndex, frame: frame,
                scene: scene, assets: assets, into: texture)
 
@@ -698,6 +773,62 @@ extension SceneMetalRenderer {
         // Three vertices, not four: a full-screen triangle has no seam down
         // the diagonal where two triangles of a quad meet.
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+    }
+
+    /// The manipulator, drawn straight onto the finished picture.
+    ///
+    /// `loadAction = .load` — this pass draws OVER what `encodePass` just
+    /// wrote, it does not clear it. The depth attachment is the opposite:
+    /// cleared to 1.0 and thrown away afterwards (`storeAction = .dontCare`),
+    /// because it exists purely to sort the gizmo's OWN triangles against
+    /// each other for this one pass — a near ring in front of a far one, a
+    /// cone in front of its own shaft — and has nothing to say about the
+    /// scene, which was drawn with no depth buffer at all.
+    private func encodeGizmoPass(_ gizmo: SceneGizmoLayout,
+                                 into destination: MTLTexture,
+                                 commandBuffer: MTLCommandBuffer) {
+        let vertices = SceneGizmoMeshBuilder.build(gizmo)
+        guard !vertices.isEmpty,
+              let buffer = gizmoVertexBuffer(for: vertices.count),
+              let depth = gizmoDepthTexture(width: destination.width, height: destination.height)
+        else { return }
+        vertices.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            buffer.contents().copyMemory(from: base, byteCount: raw.count)
+        }
+
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = destination
+        pass.colorAttachments[0].loadAction = .load
+        pass.colorAttachments[0].storeAction = .store
+        pass.depthAttachment.texture = depth
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.clearDepth = 1.0
+        pass.depthAttachment.storeAction = .dontCare
+
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        encoder.label = "Scene gizmo"
+        encoder.setRenderPipelineState(gizmoPipeline)
+        encoder.setDepthStencilState(gizmoDepthState)
+        // NO CULLING. The mesh builder does not promise a consistent winding
+        // across every primitive it emits — a torus tube and a plane quad
+        // built from an arbitrary `(u, v)` frame have no reason to agree —
+        // and the cost of drawing both faces of a few hundred small triangles
+        // is not worth chasing winding correctness for.
+        encoder.setCullMode(.none)
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+
+        var uniforms = SceneGizmoFrameUniforms(
+            viewProjection: gizmo.viewProjection,
+            eyeAndPad: SIMD4<Float>(gizmo.eye, 0),
+            screenOffsetNDC: SIMD4<Float>(gizmo.screenOffsetNDC, 0, 0))
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<SceneGizmoFrameUniforms>.stride,
+                               index: 1)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<SceneGizmoFrameUniforms>.stride,
+                                 index: 0)
+
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertices.count)
         encoder.endEncoding()
     }
 }
@@ -1476,6 +1607,38 @@ private extension SceneMetalRenderer {
             buffer.contents().copyMemory(from: base, byteCount: raw.count)
         }
         encoder.setFragmentBuffer(buffer, offset: 0, index: 2)
+    }
+
+    /// The gizmo's own vertex ring, rebuilt fresh every frame from
+    /// `SceneGizmoMeshBuilder.build(_:)` — there is no reuse across frames to
+    /// speak of, since the manipulator's shape changes with every camera and
+    /// selection change, so this exists purely to avoid a fresh `MTLBuffer`
+    /// allocation on every draw.
+    func gizmoVertexBuffer(for count: Int) -> MTLBuffer? {
+        let needed = MemoryLayout<SceneGizmoVertexIn>.stride * count
+        if gizmoVertexCapacity < needed || gizmoVertexBuffers.contains(where: { $0 == nil }) {
+            let aligned = ((needed + 4095) / 4096) * 4096
+            gizmoVertexBuffers = gizmoVertexBuffers.map { _ in
+                device.makeBuffer(length: aligned, options: .storageModeShared)
+            }
+            gizmoVertexCapacity = aligned
+        }
+        return gizmoVertexBuffers[ringIndex]
+    }
+
+    /// The gizmo pass's transient depth buffer, sized to match `destination`.
+    /// Cleared every pass and never stored — see `gizmoDepth`'s own comment.
+    func gizmoDepthTexture(width: Int, height: Int) -> MTLTexture? {
+        if let existing = gizmoDepth, existing.width == width, existing.height == height {
+            return existing
+        }
+        guard width > 0, height > 0 else { return nil }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .depth32Float, width: width, height: height, mipmapped: false)
+        descriptor.usage = .renderTarget
+        descriptor.storageMode = .private
+        gizmoDepth = device.makeTexture(descriptor: descriptor)
+        return gizmoDepth
     }
 
     func accumulationTexture(width: Int, height: Int) -> MTLTexture? {
