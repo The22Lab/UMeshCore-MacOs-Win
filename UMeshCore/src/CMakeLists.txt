@@ -8,6 +8,12 @@
 add_library(umeshcore STATIC
     Version.cpp
     Animation/AnimationClip.cpp
+    Model/Bone.cpp
+    Constraints/ConstraintPropagation.cpp
+    Constraints/IKSolver.cpp
+    Constraints/PathSolver.cpp
+    Constraints/TransformConstraintSolver.cpp
+    Constraints/PhysicsConstraintSystem.cpp
 )
 
 target_include_directories(umeshcore

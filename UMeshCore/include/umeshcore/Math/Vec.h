@@ -102,6 +102,13 @@ struct Vec4 {
     constexpr bool operator==(const Vec4& o) const {
         return x == o.x && y == o.y && z == o.z && w == o.w;
     }
+
+    constexpr float operator[](int i) const {
+        return i == 0 ? x : (i == 1 ? y : (i == 2 ? z : w));
+    }
+    constexpr float& operator[](int i) {
+        return i == 0 ? x : (i == 1 ? y : (i == 2 ? z : w));
+    }
 };
 
 inline constexpr Vec4 operator*(float s, const Vec4& v) { return v * s; }
