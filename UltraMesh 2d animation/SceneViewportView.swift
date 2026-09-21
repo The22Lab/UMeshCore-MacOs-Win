@@ -1094,9 +1094,16 @@ struct SceneViewportView: View {
                 }
 
                 if isFlying {
-                    // Flying, on something: the handles took it, or there is
-                    // nothing else a drag can mean up here.
-                    navigate(delta: delta, fingers: 1, viewHeight: viewHeight)
+                    // Flying, ON A HANDLE — `pointerNavigates` can only be
+                    // `false` here, which is `toolClaims` saying this drag
+                    // started on one. `SceneGizmoOverlay`'s own gesture is
+                    // meant to own the touch from here, so THIS gesture does
+                    // nothing rather than navigate: navigating anyway is
+                    // exactly the "grab a light's radius handle and the
+                    // camera orbits instead" fault, for any handle SwiftUI's
+                    // gesture disambiguation does not hand to the child view
+                    // first. There is nothing else a claimed touch could mean
+                    // while flying, so there is nothing to do but let it be.
                     return
                 }
 

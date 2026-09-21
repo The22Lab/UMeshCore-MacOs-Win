@@ -77,33 +77,46 @@ struct SceneGizmoOverlay: View {
     /// Handle length on screen. Constant, the way every 3D editor's is: a gizmo
     /// that shrank into the distance would be one you cannot grab exactly when
     /// the thing is hardest to reach.
-    static let handlePixels: CGFloat = 78
+    ///
+    /// 78 BEFORE THE GIZMO MOVED TO METAL, and that number was tuned for thin
+    /// 2pt `Canvas` strokes. Real cylinders, cones and torus tubes have girth
+    /// as well as length — the SAME 78px reach reads as a manipulator large
+    /// enough to cover most of the canvas once it has volume, which is what
+    /// "exageradamente grandes" was. A quarter of the old length shrinks the
+    /// whole thing proportionally, since every mesh radius in
+    /// `SceneGizmoMeshBuilder` is itself a fraction of `gizmoScale(...)`,
+    /// which is built from this constant.
+    static let handlePixels: CGFloat = 19.5
     /// Below this an axis has no direction worth trusting — the card is turned
     /// edge-on — so its handle is not drawn and refuses the drag rather than
     /// dividing a pointer delta by almost nothing and throwing the card off the
     /// set.
     /// An axis drawn shorter than this is not drawn at all.
     ///
-    /// It was 6, and the arrowhead is 12 long: between the two the head was
-    /// longer than the shaft it caps, which is what "the arrowheads look
-    /// deformed from some angles" is. An arrow needs to be an arrow, so the
-    /// floor is the head plus a shaft worth seeing. Below it the axis is
-    /// pointing at the eye, and the drag is refused rather than answered by
-    /// dividing by almost nothing.
-    static let minAxisPixels: CGFloat = 26
+    /// SCALED WITH `handlePixels`, at the same ~1/3 ratio it always was (it
+    /// was 26 against a length of 78). Left at the old absolute value it would
+    /// exceed the new, shorter handle length outright — an axis facing the
+    /// camera even reasonably square-on would measure under the floor and
+    /// never draw at all, which is a worse fault than the deformed arrowhead
+    /// this constant was introduced to fix.
+    static let minAxisPixels: CGFloat = 6.5
     /// How near the pointer has to be to grab one.
+    ///
+    /// NOT scaled down with the gizmo's new, smaller size. A smaller target is
+    /// exactly the case a generous grab radius is for — shrinking this to
+    /// match would trade the "gizmo is too big" complaint for "the gizmo is
+    /// too small to grab", which is not the fix that was asked for.
     static let grabPixels: CGFloat = 22
 
     // MARK: Light chrome
     //
-    // VISUAL SIZE AND HIT SIZE ARE DIFFERENT NUMBERS, and they are named
-    // separately here for the reason the rest of this editor already names
-    // them separately: a dot big enough to hit comfortably with a finger is a
-    // dot too big to sit politely on top of artwork. The drawn dot is small and
-    // the hitbox around it is not.
+    // The DRAWN size of a light's own handle dots is decided in
+    // `SceneGizmoMeshBuilder.lightHandleSphereRadiusFraction` now, alongside
+    // every other GPU-drawn size. What is left here is purely about the HIT
+    // area, which stays its own, deliberately more generous number — a dot
+    // big enough to hit comfortably with a finger is a dot too big to sit
+    // politely on top of artwork.
 
-    /// The drawn radius of a light's own handle dots.
-    static let lightHandleVisualPx: CGFloat = 4.5
     /// How near the pointer has to be to take one.
     ///
     /// SMALLER than `grabPixels`, not larger. A light's handles sit close
@@ -125,10 +138,6 @@ struct SceneGizmoOverlay: View {
         #endif
     }
 
-    /// The influence ring, the cone and the beam are drawn at this width.
-    /// One point, not two: this is a diagram over somebody's artwork, and it
-    /// has to be readable without competing with it.
-    static let lightChromeWidth: CGFloat = 1.4
     /// The order handles are tested in. Fixed, so a tie is broken the same way
     /// twice — see `beginDrag`.
     static let axisOrder: [HandleID] = [.axisX, .axisY, .axisZ]
@@ -242,28 +251,26 @@ struct SceneGizmoOverlay: View {
     }
 
     var body: some View {
-        ZStack {
-            // THE LIGHT'S DIAGRAM ONLY. The manipulator itself — axes, rings,
-            // planes — used to be drawn here too, by `Canvas`, and that is the
-            // whole of why it lagged the picture during a trackpad gesture:
-            // `Canvas` redraws on SwiftUI's own cadence, which the very same
-            // gesture handling stalls (see `CanvasActivity.
-            // drawIfDisplayLinkStalled()`), while the Metal picture underneath
-            // gets force-redrawn by hand. `SceneMetalRenderer.encodeGizmoPass`
-            // now draws the manipulator INSIDE that same forced draw call, from
-            // `gizmoLayout()` below — built from the exact same
-            // `handleSet()`-adjacent state, so it cannot disagree with the
-            // hit-testing/drag code that stays here.
-            //
-            // A light's own diagram stays SwiftUI: it is chrome describing
-            // what the light DOES, not a manipulator being actively dragged,
-            // and the cost of it trailing one frame during a stalled gesture
-            // reads very differently from a handle trailing the pointer.
-            if let handles = handleSet(), let light = handles.light {
-                Canvas { context, _ in drawLight(light, in: &context) }
-                    .allowsHitTesting(false)
-            }
-        }
+        // NOTHING DRAWN HERE ANY MORE. The whole manipulator — axes, rings,
+        // planes, AND a light's own diagram (influence sphere, cone, beam) —
+        // used to be a `Canvas`, redrawn only on SwiftUI's own cadence, which
+        // the very gesture handling that mutates the camera also stalls (see
+        // `CanvasActivity.drawIfDisplayLinkStalled()`) while the Metal
+        // picture underneath gets force-redrawn by hand. That was the whole
+        // of the layer gizmo lagging the picture, and — until now — the whole
+        // of the light gizmo's own diagram lagging its OWN already-GPU-drawn
+        // move/rotate handles, which is what "interactúa mal con los demás
+        // gizmos" was. `SceneMetalRenderer.encodeGizmoPass` now draws all of
+        // it INSIDE that same forced draw call, from `gizmoLayout()` below —
+        // built from the exact same `gizmoState()` the hit-testing that stays
+        // here already uses, so nothing drawn can disagree with anything
+        // grabbed.
+        //
+        // This view still exists for exactly one reason: it is where the
+        // gesture and the hit-test attach — `.contentShape(grabShape())`
+        // below is what actually restricts that to the gizmo's own geometry,
+        // so this stays plain and hit-testable rather than disabled.
+        Color.clear
         // THE HANDLES, NOT THE VIEWPORT. This was `Rectangle()`, so the overlay
         // claimed every drag over the whole canvas — and on macOS that is the
         // drag that orbits the set. Zoom still worked, because magnification is
@@ -300,6 +307,29 @@ struct SceneGizmoOverlay: View {
         var path = Path()
         guard let set = handleSet() else { return path }
         let r = Self.grabPixels
+
+        // A LIGHT'S OWN HANDLES, REGARDLESS OF TOOL — the radius ring,
+        // softness, direction and cone-angle dots. This was the whole of "los
+        // nodos nunca se seleccionan, solo se rota o mueve la cámara" on
+        // macOS: `beginDragTarget(at:)` already tests these first and would
+        // have claimed the touch, but nothing added them to THIS shape, and
+        // `.contentShape(grabShape())` is what decides whether SwiftUI even
+        // offers this view's own `dragGesture` the touch in the first place.
+        // A touch outside every shape in this path is a touch this view never
+        // sees at all — it falls straight through to `SceneViewportView`'s
+        // outer drag gesture, which (while flying) always reads an unclaimed
+        // touch as camera navigation. The axis/ring/plane arrows already
+        // worked because their shapes were already here; the light's own dots
+        // simply never were.
+        if let light = set.light {
+            for handle in SceneLightGizmo.handles(for: light.kind) {
+                guard let p = light.points[handle] else { continue }
+                path.addEllipse(in: CGRect(x: p.x - Self.lightGrabRadius, y: p.y - Self.lightGrabRadius,
+                                           width: 2 * Self.lightGrabRadius,
+                                           height: 2 * Self.lightGrabRadius))
+            }
+        }
+
         switch tool {
         case .translate, .scale, .shear:
             for id in Self.axisOrder {
@@ -685,33 +715,21 @@ struct SceneGizmoOverlay: View {
         var light: LightHandles?
     }
 
-    /// A light's visualisation and its grabbable points, already projected.
+    /// A light's grabbable points, already projected to screen — what
+    /// `beginDragTarget`/`grabShape` need to hit-test it.
     ///
-    /// EVERYTHING HERE IS EDITOR CHROME. It is built in this overlay, which is
-    /// SwiftUI drawn on top of the rendered image; the renderer never sees it
-    /// and an export cannot contain it. That is a promise kept by construction
-    /// rather than by a flag somebody has to remember to check.
+    /// USED TO ALSO CARRY THE WHOLE DIAGRAM — the influence rings, the cone's
+    /// edges and arcs, the beam. That was for `drawLight(_:in:)`, a SwiftUI
+    /// `Canvas` method that drew all of it; now that the diagram is GPU-drawn
+    /// from `SceneGizmoOverlay.lightDiagramLayout(_:projection:)` (built from
+    /// `lightWorldGeometry`, not from this), nothing here reads screen-space
+    /// rings or arcs any more, and computing them on every `handleSet()` call
+    /// for no reader was wasted work every frame. Trimmed to what hit-testing
+    /// still touches.
     struct LightHandles {
-        /// The light itself, projected. Nil when it is behind the eye, where it
-        /// has no honest position and nothing should be drawn at one.
-        var centre: CGPoint?
-        /// The outer edge of the light's influence.
-        var influence: [CGPoint]
-        /// Where the fade begins. Absent when softness is 1 and it would sit on
-        /// the light itself.
-        var inner: [CGPoint]
-        /// The beam axis, from the light to the far end.
-        var beam: (CGPoint, CGPoint)?
-        /// The cone's two edges and the arcs across them.
-        var outerEdges: [(CGPoint, CGPoint)]
-        var innerEdges: [(CGPoint, CGPoint)]
-        var outerArc: [CGPoint]
-        var innerArc: [CGPoint]
         /// Where each grabbable point landed.
         var points: [SceneLightGizmo.Handle: CGPoint]
         var kind: SceneLightKind
-        var colour: Color
-        var isEnabled: Bool
     }
 
     /// Everything the gizmo looks like THIS pass, before any drawing or hit
@@ -942,6 +960,9 @@ struct SceneGizmoOverlay: View {
             // which requires the point to be meaningfully in front of the eye
             // (`w > nearZ > 0`) — so `basis.origin` and the eye cannot coincide.
             forward: simd_normalize(basis.origin - state.realProjection.eye),
+            lightDiagram: activeLight.map {
+                lightDiagramLayout($0, projection: state.realProjection)
+            },
             viewProjection: state.projection.viewProjection,
             screenOffsetNDC: SIMD2<Float>(
                 2 * state.screenOffsetPx.x / pixelSize.x,
@@ -954,13 +975,33 @@ struct SceneGizmoOverlay: View {
     /// through the same `project` the cards went through, so the circle leans
     /// into an ellipse when the camera turns and the cone foreshortens, for
     /// free. Nothing here is drawn in screen space and then hoped to line up.
-    private func lightHandles(_ light: SceneLight,
-                              projection: SceneProjection,
-                              map: (SIMD3<Float>) -> SIMD2<Float>?) -> LightHandles? {
+    /// Everything about a light's own diagram, in WORLD space and nothing
+    /// else — no `CGPoint`, no projection baked in. `lightHandles(_:
+    /// projection:map:)` (CPU hit-testing) and `lightDiagramLayout(_:
+    /// projection:)` (the GPU's input) both start here, so the two cannot
+    /// describe two different spheres for the same light.
+    private struct LightWorldGeometry {
+        var centre: SIMD3<Float>
+        /// The plane every camera-facing shape — the influence rings, the
+        /// cone's drawing plane — is built in. Recomputed from the CURRENT
+        /// camera every call, which is what lets a point light's circle stay
+        /// facing the eye as it orbits.
+        var viewAxis: SIMD3<Float>
+        /// 0 when there is no ring to draw — a directional light, or a
+        /// positional one with no radius yet.
+        var influenceRadius: Float
+        var innerRadius: Float
+        var beam: (SIMD3<Float>, SIMD3<Float>)?
+        var outerEdges: [(SIMD3<Float>, SIMD3<Float>)]
+        var innerEdges: [(SIMD3<Float>, SIMD3<Float>)]
+        var outerArc: [SIMD3<Float>]
+        var innerArc: [SIMD3<Float>]
+        var handlePositions: [SceneLightGizmo.Handle: SIMD3<Float>]
+    }
+
+    private func lightWorldGeometry(_ light: SceneLight,
+                                    projection: SceneProjection) -> LightWorldGeometry {
         let centre = light.world
-        let frame = SceneLightGizmo.facingFrame(projection)
-        func view(_ world: SIMD3<Float>) -> CGPoint? { map(world).map(toView) }
-        func polyline(_ worlds: [SIMD3<Float>]) -> [CGPoint] { worlds.compactMap(view) }
 
         // The beam is drawn a fixed number of PIXELS long for a directional
         // light, which has no radius to borrow, and to the rim for the others —
@@ -974,64 +1015,99 @@ struct SceneGizmoOverlay: View {
             beamWorld = light.radius
         }
 
-        var influence: [CGPoint] = []
-        var inner: [CGPoint] = []
-        if light.kind.isPositional, light.radius > 0 {
-            influence = polyline(SceneLightGizmo.ring(centre: centre, radius: light.radius,
-                                                      frame: frame, samples: Self.ringSamples))
-            if light.innerRadius > light.radius * 0.02 {
-                inner = polyline(SceneLightGizmo.ring(centre: centre, radius: light.innerRadius,
-                                                      frame: frame, samples: Self.ringSamples))
-            }
+        let influenceRadius: Float = (light.kind.isPositional && light.radius > 0)
+            ? light.radius : 0
+        let innerRadius: Float = (influenceRadius > 0 && light.innerRadius > light.radius * 0.02)
+            ? light.innerRadius : 0
+
+        var beam: (SIMD3<Float>, SIMD3<Float>)?
+        if light.kind != .point, beamWorld > 0 {
+            beam = (centre, centre + light.direction * beamWorld)
         }
 
-        var beam: (CGPoint, CGPoint)?
-        if light.kind != .point, beamWorld > 0,
-           let a = view(centre), let b = view(centre + light.direction * beamWorld) {
-            beam = (a, b)
-        }
-
-        var outerEdges: [(CGPoint, CGPoint)] = []
-        var innerEdges: [(CGPoint, CGPoint)] = []
-        var outerArc: [CGPoint] = []
-        var innerArc: [CGPoint] = []
+        var outerEdges: [(SIMD3<Float>, SIMD3<Float>)] = []
+        var innerEdges: [(SIMD3<Float>, SIMD3<Float>)] = []
+        var outerArc: [SIMD3<Float>] = []
+        var innerArc: [SIMD3<Float>] = []
         if light.kind == .spot, light.radius > 0 {
             let across = SceneLightGizmo.conePlane(axis: light.direction, projection: projection)
-            func edges(_ angle: Float) -> [(CGPoint, CGPoint)] {
+            func edges(_ angle: Float) -> [(SIMD3<Float>, SIMD3<Float>)] {
                 let rim = SceneLightGizmo.coneRim(centre: centre, axis: light.direction,
                                                   across: across, halfAngle: angle,
                                                   distance: light.radius)
-                guard let o = view(centre) else { return [] }
-                return [rim.0, rim.1].compactMap { view($0) }.map { (o, $0) }
+                return [(centre, rim.0), (centre, rim.1)]
             }
             outerEdges = edges(light.outerAngle)
             innerEdges = edges(light.innerAngle)
-            outerArc = polyline(SceneLightGizmo.coneArc(
+            outerArc = SceneLightGizmo.coneArc(
                 centre: centre, axis: light.direction, across: across,
-                halfAngle: light.outerAngle, distance: light.radius))
-            innerArc = polyline(SceneLightGizmo.coneArc(
+                halfAngle: light.outerAngle, distance: light.radius)
+            innerArc = SceneLightGizmo.coneArc(
                 centre: centre, axis: light.direction, across: across,
-                halfAngle: light.innerAngle, distance: light.radius))
+                halfAngle: light.innerAngle, distance: light.radius)
         }
+
+        var handlePositions: [SceneLightGizmo.Handle: SIMD3<Float>] = [:]
+        for handle in SceneLightGizmo.handles(for: light.kind) {
+            if let world = SceneLightGizmo.position(handle, light: light,
+                                                     projection: projection,
+                                                     directionLength: beamWorld) {
+                handlePositions[handle] = world
+            }
+        }
+
+        return LightWorldGeometry(
+            centre: centre, viewAxis: SceneLightGizmo.viewAxis(projection),
+            influenceRadius: influenceRadius, innerRadius: innerRadius,
+            beam: beam, outerEdges: outerEdges, innerEdges: innerEdges,
+            outerArc: outerArc, innerArc: innerArc, handlePositions: handlePositions)
+    }
+
+    private func lightHandles(_ light: SceneLight,
+                              projection: SceneProjection,
+                              map: (SIMD3<Float>) -> SIMD2<Float>?) -> LightHandles? {
+        // Only `handlePositions` is read below — the rings/edges/arcs
+        // `lightWorldGeometry` also computes exist for `lightDiagramLayout`
+        // (the GPU path), not for this one, so this stays cheap: a handful of
+        // point lookups, not a re-sample of two circles and a cone's arcs
+        // that would then be thrown away unread.
+        let world = lightWorldGeometry(light, projection: projection)
+        func view(_ w: SIMD3<Float>) -> CGPoint? { map(w).map(toView) }
 
         var points: [SceneLightGizmo.Handle: CGPoint] = [:]
         for handle in SceneLightGizmo.handles(for: light.kind) {
-            guard let world = SceneLightGizmo.position(handle, light: light,
-                                                       projection: projection,
-                                                       directionLength: beamWorld),
-                  let p = view(world) else { continue }
+            guard let w = world.handlePositions[handle], let p = view(w) else { continue }
             points[handle] = p
         }
 
-        return LightHandles(
-            centre: view(centre),
-            influence: influence, inner: inner, beam: beam,
-            outerEdges: outerEdges, innerEdges: innerEdges,
-            outerArc: outerArc, innerArc: innerArc,
-            points: points, kind: light.kind,
-            colour: Color(red: Double(light.color.x), green: Double(light.color.y),
-                          blue: Double(light.color.z)),
-            isEnabled: light.isEnabled)
+        return LightHandles(points: points, kind: light.kind)
+    }
+
+    /// The light's own diagram, for the GPU — the counterpart to
+    /// `lightHandles` that skips the screen entirely. Built from the SAME
+    /// `lightWorldGeometry`, on the REAL projection: the camera-facing plane
+    /// a point light's ring lies in has to be the true camera's, not the
+    /// gizmo's recentred one, exactly as `lightHandles` already reads it. The
+    /// GPU still places every one of these world points through the
+    /// stabilised `viewProjection`/`screenOffsetNDC`, same as the axes — only
+    /// which PLANE the ring lies in is decided here, never where it lands.
+    private func lightDiagramLayout(_ light: SceneLight,
+                                    projection: SceneProjection) -> SceneGizmoLayout.LightDiagram {
+        let world = lightWorldGeometry(light, projection: projection)
+        let tint = light.isEnabled
+            ? SIMD4<Float>(light.color.x, light.color.y, light.color.z, 1)
+            : SIMD4<Float>(1, 1, 1, 1)
+        let handles = SceneLightGizmo.handles(for: light.kind).compactMap { handle
+            -> (position: SIMD3<Float>, highlighted: Bool)? in
+            guard let p = world.handlePositions[handle] else { return nil }
+            return (p, highlighted == .light(handle))
+        }
+        return SceneGizmoLayout.LightDiagram(
+            centre: world.centre, tint: tint, isEnabled: light.isEnabled,
+            viewAxis: world.viewAxis,
+            influenceRadius: world.influenceRadius, innerRadius: world.innerRadius,
+            beam: world.beam, outerEdges: world.outerEdges, innerEdges: world.innerEdges,
+            outerArc: world.outerArc, innerArc: world.innerArc, handles: handles)
     }
 
     // MARK: - Colour
@@ -1064,100 +1140,13 @@ struct SceneGizmoOverlay: View {
     static let viewRingScale: CGFloat = 1.28
 
     // MARK: - The light's diagram
-
-    /// What the light does, drawn over the canvas.
-    ///
-    /// TINTED WITH THE LIGHT'S OWN COLOUR, at low opacity. It is how you tell
-    /// two lights apart at a glance without reading a label, and it is why the
-    /// chrome does not use the gizmo's axis colours: those mean X, Y and Z, and
-    /// a ring that borrowed one would be claiming to be an axis.
-    ///
-    /// A disabled light is drawn in grey. Present, placeable, visibly off.
-    private func drawLight(_ light: LightHandles, in context: inout GraphicsContext) {
-        let tint = light.isEnabled ? light.colour : Color.white
-        let strong = tint.opacity(light.isEnabled ? 0.95 : 0.45)
-        let soft = tint.opacity(light.isEnabled ? 0.45 : 0.2)
-        let faint = tint.opacity(light.isEnabled ? 0.22 : 0.12)
-
-        func stroke(_ points: [CGPoint], _ colour: Color, _ width: CGFloat,
-                    dash: [CGFloat] = []) {
-            guard points.count >= 2 else { return }
-            var path = Path()
-            path.move(to: points[0])
-            for p in points.dropFirst() { path.addLine(to: p) }
-            context.stroke(path, with: .color(colour),
-                           style: StrokeStyle(lineWidth: width, lineCap: .round, dash: dash))
-        }
-
-        // The band between the inner edge and the rim is where the light fades,
-        // so the rim is drawn solid and the inner edge dashed: one is where the
-        // light ends, the other is where it starts to go.
-        stroke(light.influence, soft, Self.lightChromeWidth)
-        stroke(light.inner, faint, Self.lightChromeWidth, dash: [4, 4])
-
-        for edge in light.outerEdges { stroke([edge.0, edge.1], soft, Self.lightChromeWidth) }
-        for edge in light.innerEdges {
-            stroke([edge.0, edge.1], faint, Self.lightChromeWidth, dash: [4, 4])
-        }
-        stroke(light.outerArc, soft, Self.lightChromeWidth)
-        stroke(light.innerArc, faint, Self.lightChromeWidth, dash: [4, 4])
-
-        if let beam = light.beam {
-            stroke([beam.0, beam.1], strong, Self.lightChromeWidth)
-            // An arrowhead, so the beam reads as a direction rather than a
-            // radius that happens to be drawn as a line.
-            let dx = beam.1.x - beam.0.x, dy = beam.1.y - beam.0.y
-            let length = hypot(dx, dy)
-            if length > 1 {
-                let ux = dx / length, uy = dy / length
-                let back = CGPoint(x: beam.1.x - ux * 11, y: beam.1.y - uy * 11)
-                var head = Path()
-                head.move(to: beam.1)
-                head.addLine(to: CGPoint(x: back.x - uy * 4.5, y: back.y + ux * 4.5))
-                head.addLine(to: CGPoint(x: back.x + uy * 4.5, y: back.y - ux * 4.5))
-                head.closeSubpath()
-                context.fill(head, with: .color(strong))
-            }
-        }
-
-        // The light itself: a small filled disc in its own colour inside a ring,
-        // which is the shape every compositor uses for a light and which reads
-        // on pale artwork and on dark. Drawn LAST of the chrome so the cone's
-        // edges, which all meet here, pass behind it rather than through it.
-        if let centre = light.centre {
-            let outer: CGFloat = 7
-            let halo = Path(ellipseIn: CGRect(x: centre.x - outer, y: centre.y - outer,
-                                              width: 2 * outer, height: 2 * outer))
-            context.stroke(halo, with: .color(strong), lineWidth: 1.6)
-            let core: CGFloat = 3
-            context.fill(Path(ellipseIn: CGRect(x: centre.x - core, y: centre.y - core,
-                                                width: 2 * core, height: 2 * core)),
-                         with: .color(strong))
-            // Four short rays, so a light reads as a light and not as a
-            // selection dot. Directional lights get none: they have a beam
-            // arrow already saying which way they point, and rays would say
-            // "radiates from here", which is the one thing they do not do.
-            if light.kind != .directional {
-                for step in 0..<4 {
-                    let a = Double(step) * .pi / 2 + .pi / 4
-                    let dx = CGFloat(cos(a)), dy = CGFloat(sin(a))
-                    var ray = Path()
-                    ray.move(to: CGPoint(x: centre.x + dx * 9.5, y: centre.y + dy * 9.5))
-                    ray.addLine(to: CGPoint(x: centre.x + dx * 13, y: centre.y + dy * 13))
-                    context.stroke(ray, with: .color(soft), lineWidth: 1.6)
-                }
-            }
-        }
-
-        for handle in SceneLightGizmo.handles(for: light.kind) {
-            guard let p = light.points[handle] else { continue }
-            let lit = highlighted == .light(handle)
-            let r = Self.lightHandleVisualPx + (lit ? 1.5 : 0)
-            let dot = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
-            context.fill(dot, with: .color(lit ? strong : tint.opacity(0.85)))
-            context.stroke(dot, with: .color(.black.opacity(0.55)), lineWidth: 1.2)
-        }
-    }
+    //
+    // Used to be drawn here, by `Canvas` — `drawLight(_:in:)`. It is now
+    // built as `SceneGizmoLayout.LightDiagram` (see `lightDiagramLayout`
+    // above) and drawn by `SceneGizmoMeshBuilder`/`SceneMetalRenderer`,
+    // exactly like the axes and rings. `lightHandles(_:projection:map:)`
+    // above still computes the SCREEN version of the same numbers — hit
+    // testing stays on this side, drawing does not.
 
     // MARK: - Dragging
 

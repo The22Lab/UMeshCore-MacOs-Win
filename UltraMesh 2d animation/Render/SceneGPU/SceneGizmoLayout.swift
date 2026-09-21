@@ -94,6 +94,36 @@ struct SceneGizmoLayout {
     /// billboards to face.
     var forward: SIMD3<Float>
 
+    /// A light's own diagram — sphere of influence, a spot's cone, the aim
+    /// beam, and a dot at each of its own handles (radius, softness,
+    /// direction, cone angles). Nil for anything that is not a light.
+    ///
+    /// GPU-drawn now for the same reason the shared axis/ring manipulator is:
+    /// this used to be a SwiftUI `Canvas`, redrawn only on SwiftUI's own
+    /// cadence — the exact lag the layer gizmo had, and the exact reason a
+    /// light's diagram and its (already GPU-drawn) move/rotate handles could
+    /// visibly separate from each other during a trackpad gesture. Placed
+    /// through the SAME stabilised `viewProjection`/`screenOffsetNDC` as
+    /// everything else in this struct, so the two can no longer disagree.
+    var lightDiagram: LightDiagram?
+    struct LightDiagram {
+        var centre: SIMD3<Float>
+        var tint: SIMD4<Float>
+        var isEnabled: Bool
+        /// The plane every camera-facing shape here lies in — a point
+        /// light's influence ring, a spot's cone drawing plane.
+        var viewAxis: SIMD3<Float>
+        /// 0 means no ring to draw.
+        var influenceRadius: Float
+        var innerRadius: Float
+        var beam: (SIMD3<Float>, SIMD3<Float>)?
+        var outerEdges: [(SIMD3<Float>, SIMD3<Float>)]
+        var innerEdges: [(SIMD3<Float>, SIMD3<Float>)]
+        var outerArc: [SIMD3<Float>]
+        var innerArc: [SIMD3<Float>]
+        var handles: [(position: SIMD3<Float>, highlighted: Bool)]
+    }
+
     /// The stabilised, recentred projection's view-projection matrix.
     var viewProjection: simd_float4x4
     /// The rigid 2D slide, in clip-space units, that moves the stabilised
