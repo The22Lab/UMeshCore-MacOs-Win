@@ -14,6 +14,8 @@ add_library(umeshcore STATIC
     Constraints/PathSolver.cpp
     Constraints/TransformConstraintSolver.cpp
     Constraints/PhysicsConstraintSystem.cpp
+    Mesh/MeshKernel.cpp
+    Mesh/MeshValidator.cpp
 )
 
 target_include_directories(umeshcore
