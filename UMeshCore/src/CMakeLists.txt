@@ -17,6 +17,7 @@ add_library(umeshcore STATIC
     Mesh/MeshKernel.cpp
     Mesh/MeshValidator.cpp
     Mesh/Mesh.cpp
+    Editor/ToolUtilities.cpp
 )
 
 target_include_directories(umeshcore

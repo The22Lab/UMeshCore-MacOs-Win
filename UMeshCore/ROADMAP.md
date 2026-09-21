@@ -122,6 +122,36 @@ Special-case validation needs, carried over into each phase's own tests:
    projection implementation, never two), CameraState/Camera2D/Camera3D,
    EditorEscape, UndoRedoManager, CanvasActivity. Testable headless, with
    zero renderer.
+   *Status: EditorEscape, CameraState, CanvasActivity, UndoRedoManager, the
+   three gizmo-metrics files, GizmoHandle, ToolInput, Model/SceneImage
+   (split out early as "the portable half of SceneManager's per-sprite
+   state" ToolUtilities needs — see the SceneManager risk note), and the
+   large majority of ToolUtilities.swift (snap*, point/segment/quad
+   geometry, sprite local-frame/transform helpers, mesh resolution +
+   skinnedLocalVertices + meshProjection + mesh vertex/edge hit-testing,
+   bone hit-testing for both the mouse and touch-scored branches, the
+   Liang-Barsky marquee test, soft-selection falloff weights, and the full
+   `hitTestGizmo` dispatch for all 6 non-mesh-alpha tool cases) are done
+   and tested. These were reformulated to take already-resolved values
+   (a `const SceneImage&`, an asset size, a `const Skeleton&`, an explicit
+   `hitScale`/`touchOptimized`) instead of `scene: SceneManager` /
+   `assets: AssetManager` — documented in ToolUtilities.h's file header as
+   a deliberate parameter-passing change with unmodified hit-test logic,
+   extending the same "inject what's needed" pattern the Swift source
+   already uses for CanvasPicking's projection closure.
+
+   Deferred, and dependent on infrastructure that doesn't exist yet:
+   `CanvasPicking.imageHit` and everything built on it (`hitTestScreen`,
+   `hitTestRect`, `hitTestSelectionTarget`, `boundsForScene`/
+   `boundsForImage`) need alpha-channel sampling against a LOADED texture,
+   i.e. an asset/image-decode pipeline (stb_image or equivalent) that
+   doesn't exist until Phase 4/5. `ToolManager` and the 8 concrete `Tool`
+   implementations (Select/Move/Rotate/Scale/Skew/Bone/Mesh/PhysicsPreview)
+   are not started — each mutates a live "Scene" (selection state, the
+   skeleton, the sprite list, undo/redo integration) that needs its own
+   design pass once the alpha-picking gap above is either filled or
+   explicitly bridged with a stub, since `CanvasPicking.target` (bone vs.
+   sprite arbitration) is on ToolManager's hot path for every click.
 3. **Serialization** — binary UMSH chunked format (byte-exact; the
    `.meshDeform` empty-payload gap in the current Swift writer needs an
    explicit decision before the reader is written, not a silent port-as-is —

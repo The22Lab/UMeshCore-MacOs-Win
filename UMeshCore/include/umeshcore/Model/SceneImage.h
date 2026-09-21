@@ -107,4 +107,16 @@ struct SceneImage {
     }
 };
 
+// 1:1 port of `SceneManager.meshPose(for:)`: the sprite's CURRENT (not
+// base/authored) pose, in the shape `Mesh::skinnedVertices` needs to fold
+// bind-space points back through.
+inline MeshBindPose meshPose(const SceneImage& image) {
+    MeshBindPose pose;
+    pose.position = image.position;
+    pose.rotation = image.rotation;
+    pose.scale = image.scale;
+    pose.skew = image.skew;
+    return pose;
+}
+
 } // namespace umeshcore
