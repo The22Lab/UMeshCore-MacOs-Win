@@ -8,6 +8,7 @@
 add_library(umeshcore STATIC
     Version.cpp
     Animation/AnimationClip.cpp
+    Animation/SceneAnimator.cpp
     Model/Bone.cpp
     Constraints/ConstraintPropagation.cpp
     Constraints/IKSolver.cpp

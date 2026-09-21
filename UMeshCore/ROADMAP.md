@@ -152,6 +152,34 @@ Special-case validation needs, carried over into each phase's own tests:
    design pass once the alpha-picking gap above is either filled or
    explicitly bridged with a stub, since `CanvasPicking.target` (bone vs.
    sprite arbitration) is on ToolManager's hot path for every click.
+
+   *A second, newly-identified blocker for the same tools*: reading
+   `ToolManager.swift` + the 8 `Core/Tools/*.swift` files end-to-end against
+   `SceneManager.swift` found that almost every sprite/bone-editing mutator a
+   tool calls (`moveBoneRoot`, `moveBoneTip`, `setBoneRotation`,
+   `setImagePosition`, ...) branches on `isAnimationEditingEnabled`/
+   `isPoseMode`: in Editor mode it writes the base pose directly and calls
+   `applyAnimations()`; in Animator mode it calls `commitKeyframe(...)`
+   instead and lets the next `applyAnimations()` re-sample the clip. Neither
+   branch is meaningful without `applyAnimations()` itself — SceneManager's
+   ~800-line whole-scene per-frame evaluator (`applyBoneAnimations`,
+   `applyBoneBindings`, `applyConstraintAnimations`, `applyDrawOrderAnimation`,
+   `applyAttachmentAnimations`, `ensureImageAnimationSpaceConsistency`,
+   `applySetupPose`, plus `solveRigPose`/`rigPose(atFrame:)` for Scene-
+   compositing instances, Phase 5) — which is a real, self-contained
+   subsystem in its own right (`Animation/SceneAnimator.h/.cpp`, new this
+   session), not previously called out as its own unit in this roadmap.
+   *Status: started.* `clipSampledBones` (every bone's local transform
+   sampled from its own `AnimationClip` at a time, the piece
+   `applyBoneAnimations` and `solveRigPose` both call into) is ported and
+   tested, including the `cyclicRotation: true` angle-unwrap this pass uses.
+   The rest of the evaluator, `commitKeyframe`/`commitMeshDeformKeyframe`,
+   and then `ToolManager` + the 8 tools on top of both, are the concrete next
+   steps, in that order — each tool's manipulation math (drag deltas, snap,
+   axis constraint) is independent of this and could in principle be ported
+   sooner, but every tool's `onMouseDown`/`onMouseUp` writes through one of
+   these two branches, so a tool ported without them would be untestable
+   against real behavior, not just incomplete.
 3. **Serialization** — binary UMSH chunked format (byte-exact; the
    `.meshDeform` empty-payload gap in the current Swift writer needs an
    explicit decision before the reader is written, not a silent port-as-is —

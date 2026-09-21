@@ -12,6 +12,7 @@ endfunction()
 
 umeshcore_add_test(MathTests MathTests.cpp)
 umeshcore_add_test(AnimationTests AnimationTests.cpp)
+umeshcore_add_test(SceneAnimatorTests SceneAnimatorTests.cpp)
 umeshcore_add_test(SkeletonTests SkeletonTests.cpp)
 umeshcore_add_test(ConstraintsTests ConstraintsTests.cpp)
 umeshcore_add_test(MeshPredicatesTests MeshPredicatesTests.cpp)
