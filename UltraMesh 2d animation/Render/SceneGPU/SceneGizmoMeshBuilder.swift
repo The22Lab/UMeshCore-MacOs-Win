@@ -34,23 +34,54 @@ enum SceneGizmoMeshBuilder {
     /// built at — that lay out an arrow: most of the length is shaft, the
     /// rest is the head, and the head is visibly wider than the shaft the
     /// way every 3D editor's arrow is.
+    ///
+    /// GIRTH BUMPED UP FROM WHAT PURE PROPORTION WOULD GIVE, now that
+    /// `SceneGizmoOverlay.handlePixels` is a quarter of what it was. Scaled
+    /// down by the exact same factor as the length, a shaft's radius lands
+    /// under a pixel on screen at ordinary zoom — a hairline that aliases
+    /// away rather than a handle. These stay chunky enough to read at the new
+    /// length; only the LENGTH is the 75% reduction that was asked for.
     static let shaftFraction: Float = 0.78
-    static let shaftRadiusFraction: Float = 0.035
-    static let headRadiusFraction: Float = 0.09
-    static let cubeHalfExtentFraction: Float = 0.05
-    static let tubeRadiusFraction: Float = 0.016
+    static let shaftRadiusFraction: Float = 0.06
+    static let headRadiusFraction: Float = 0.14
+    static let cubeHalfExtentFraction: Float = 0.075
+    static let tubeRadiusFraction: Float = 0.026
     static let planeQuadColorAlpha: Float = 0.5
 
     /// A highlighted handle reads thicker, not merely brighter — the same
     /// idea `SceneGizmoOverlay.litWidth` used to carry as a stroke width.
     static let highlightedThicknessScale: Float = 1.6
 
+    /// A light's own diagram — sizes for its tubes and dots, as fractions of
+    /// `layout.scale`, exactly like every other fraction above. `layout.scale`
+    /// is built at the GIZMO'S ORIGIN, which for a light target IS the light
+    /// (`SceneGizmoOverlay.basis(for: light).origin == light.world`), so it is
+    /// already "how many world units make a constant number of pixels at
+    /// THIS light's own depth" — the same screen-constant reference the axes
+    /// use, reused rather than re-derived. The influence ring's and the
+    /// cone's own RADIUS is not scaled by this at all: those come straight
+    /// from the light's `radius`/`direction`, whatever size the artist set.
+    static let lightTubeRadiusFraction: Float = 0.02
+    static let lightHandleSphereRadiusFraction: Float = 0.06
+    static let lightCentreSphereRadiusFraction: Float = 0.05
+    static let lightBeamHeadRadiusFraction: Float = 0.09
+    /// How much of the beam's own length its arrowhead occupies.
+    static let lightBeamHeadLengthFraction: Float = 0.18
+
     // MARK: - Build
 
     static func build(_ layout: SceneGizmoLayout) -> [SceneGizmoVertexIn] {
         var vertices: [SceneGizmoVertexIn] = []
 
-        // Planes first, then axes, then rings — the same order
+        // THE LIGHT'S DIAGRAM FIRST, UNDER THE MANIPULATOR — the same order
+        // `drawLight` used to draw in, before it moved here: it says what the
+        // light DOES, the arrows say what a drag would do, and a handle an
+        // artist is reaching for should never be hidden behind a ring.
+        if let light = layout.lightDiagram {
+            vertices += lightDiagramMesh(light, scale: layout.scale)
+        }
+
+        // Planes, then axes, then rings — the same order
         // `SceneGizmoOverlay`'s old `draw(_:in:)` drew them in, so nearly
         // coincident translucent surfaces still read the way they used to.
         for (_, plane) in layout.planes.sorted(by: { $0.key.sortKey < $1.key.sortKey }) {
@@ -160,6 +191,100 @@ enum SceneGizmoMeshBuilder {
         // one-sided quad would still go dark from behind without this.
         return [v(p00), v(p10), v(p11), v(p00), v(p11), v(p01),
                 v(p00), v(p11), v(p10), v(p00), v(p01), v(p11)]
+    }
+
+    // MARK: - A light's own diagram
+
+    /// The counterpart to the old `drawLight(_:in:)`: the influence sphere
+    /// (and where its fade starts), a spot's cone, the aim beam, and a small
+    /// sphere at the light itself and at each of its own handles.
+    ///
+    /// TINTED WITH THE LIGHT'S OWN COLOUR, exactly as the SwiftUI version was
+    /// — it is how an artist tells two lights apart at a glance without
+    /// reading a label, and it is why this never reaches for
+    /// `SceneGizmoOverlay.axisColor(_:)`: that palette means X, Y and Z, and
+    /// chrome borrowing it would be claiming to be an axis.
+    private static func lightDiagramMesh(_ diagram: SceneGizmoLayout.LightDiagram,
+                                         scale: Float) -> [SceneGizmoVertexIn] {
+        var vertices: [SceneGizmoVertexIn] = []
+        // A disabled light reads in a flatter, dimmer version of its own
+        // colour — present, placeable, visibly off — the same reading
+        // `drawLight` gave it by mixing `light.colour` down towards white.
+        let dim: Float = diagram.isEnabled ? 1 : 0.55
+        func tinted(_ alpha: Float) -> SIMD4<Float> {
+            SIMD4<Float>(diagram.tint.x, diagram.tint.y, diagram.tint.z, alpha * dim)
+        }
+
+        let tubeRadius = scale * lightTubeRadiusFraction
+
+        // The band between the inner edge and the rim is where the light
+        // fades, so the rim is drawn at full strength and the inner edge
+        // thinner and dimmer — one is where the light ends, the other is
+        // where it starts to go.
+        if diagram.influenceRadius > 0 {
+            vertices += torus(center: diagram.centre, normal: diagram.viewAxis,
+                              radius: diagram.influenceRadius, tubeRadius: tubeRadius,
+                              ringSegments: ringSegments, tubeSides: tubeSides,
+                              color: tinted(0.6))
+        }
+        if diagram.innerRadius > 0 {
+            vertices += torus(center: diagram.centre, normal: diagram.viewAxis,
+                              radius: diagram.innerRadius, tubeRadius: tubeRadius * 0.7,
+                              ringSegments: ringSegments, tubeSides: tubeSides,
+                              color: tinted(0.32))
+        }
+        for edge in diagram.outerEdges {
+            vertices += cylinder(from: edge.0, to: edge.1, radius: tubeRadius,
+                                 sides: tubeSides, color: tinted(0.6))
+        }
+        for edge in diagram.innerEdges {
+            vertices += cylinder(from: edge.0, to: edge.1, radius: tubeRadius * 0.7,
+                                 sides: tubeSides, color: tinted(0.32))
+        }
+        vertices += tubeAlongPolyline(diagram.outerArc, radius: tubeRadius,
+                                      sides: tubeSides, color: tinted(0.6))
+        vertices += tubeAlongPolyline(diagram.innerArc, radius: tubeRadius * 0.7,
+                                      sides: tubeSides, color: tinted(0.32))
+
+        // The beam: a shaft plus an arrowhead, so it reads as a direction
+        // rather than a radius that happens to be drawn as a line.
+        if let beam = diagram.beam {
+            let span = beam.1 - beam.0
+            let shaftEnd = beam.0 + span * (1 - lightBeamHeadLengthFraction)
+            vertices += cylinder(from: beam.0, to: shaftEnd, radius: tubeRadius,
+                                 sides: tubeSides, color: tinted(0.95))
+            vertices += cone(base: shaftEnd, apex: beam.1,
+                             radius: scale * lightBeamHeadRadiusFraction,
+                             sides: tubeSides, color: tinted(0.95))
+        }
+
+        // The light itself, drawn LAST of the chrome so the cone's edges,
+        // which all meet here, sit behind it rather than poking through it.
+        vertices += sphere(center: diagram.centre,
+                           radius: scale * lightCentreSphereRadiusFraction,
+                           color: tinted(0.95))
+
+        for handle in diagram.handles {
+            let thickness: Float = handle.highlighted ? highlightedThicknessScale : 1
+            vertices += sphere(center: handle.position,
+                               radius: scale * lightHandleSphereRadiusFraction * thickness,
+                               color: tinted(handle.highlighted ? 1 : 0.85))
+        }
+        return vertices
+    }
+
+    /// A tube of constant radius following a polyline — one cylinder segment
+    /// per pair of consecutive points. Used for a cone's rim arc, which is a
+    /// genuine partial circle and so cannot reuse `torus`, built for a full one.
+    private static func tubeAlongPolyline(_ points: [SIMD3<Float>], radius: Float, sides: Int,
+                                          color: SIMD4<Float>) -> [SceneGizmoVertexIn] {
+        guard points.count >= 2 else { return [] }
+        var vertices: [SceneGizmoVertexIn] = []
+        for i in 0..<(points.count - 1) {
+            vertices += cylinder(from: points[i], to: points[i + 1], radius: radius,
+                                 sides: sides, color: color)
+        }
+        return vertices
     }
 
     // MARK: - Primitives
@@ -291,6 +416,39 @@ enum SceneGizmoMeshBuilder {
                 vertices.append(SceneGizmoVertexIn(world: b0, normal: m0, color: color))
                 vertices.append(SceneGizmoVertexIn(world: b1, normal: m1, color: color))
                 vertices.append(SceneGizmoVertexIn(world: a1, normal: n1, color: color))
+            }
+        }
+        return vertices
+    }
+
+    /// A low-poly UV sphere — the light's own centre marker and its handle
+    /// dots. Rotationally symmetric, so unlike every other primitive here it
+    /// needs no `(u, v)` frame derived from a direction: the poles are just
+    /// `(0, 1, 0)`, and nothing about a sphere cares which way that points.
+    private static func sphere(center: SIMD3<Float>, radius: Float,
+                               latSegments: Int = 6, lonSegments: Int = 10,
+                               color: SIMD4<Float>) -> [SceneGizmoVertexIn] {
+        guard radius > 1e-6 else { return [] }
+        func point(_ lat: Int, _ lon: Int) -> (SIMD3<Float>, SIMD3<Float>) {
+            let theta = Float(lat) / Float(latSegments) * .pi
+            let phi = Float(lon) / Float(lonSegments) * 2 * .pi
+            let n = SIMD3<Float>(sin(theta) * cos(phi), cos(theta), sin(theta) * sin(phi))
+            return (center + n * radius, n)
+        }
+        var vertices: [SceneGizmoVertexIn] = []
+        vertices.reserveCapacity(latSegments * lonSegments * 6)
+        for lat in 0..<latSegments {
+            for lon in 0..<lonSegments {
+                let (p00, n00) = point(lat, lon)
+                let (p01, n01) = point(lat, lon + 1)
+                let (p10, n10) = point(lat + 1, lon)
+                let (p11, n11) = point(lat + 1, lon + 1)
+                vertices.append(SceneGizmoVertexIn(world: p00, normal: n00, color: color))
+                vertices.append(SceneGizmoVertexIn(world: p10, normal: n10, color: color))
+                vertices.append(SceneGizmoVertexIn(world: p11, normal: n11, color: color))
+                vertices.append(SceneGizmoVertexIn(world: p00, normal: n00, color: color))
+                vertices.append(SceneGizmoVertexIn(world: p11, normal: n11, color: color))
+                vertices.append(SceneGizmoVertexIn(world: p01, normal: n01, color: color))
             }
         }
         return vertices
