@@ -146,6 +146,7 @@ final class SceneMetalRenderer {
     private var emptyLightBuffer: MTLBuffer?
     private var emptyCurveTexture: MTLTexture?
     private var emptyNormalTexture: MTLTexture?
+    private var emptyHeightTexture: MTLTexture?
     private var emptyOccluderBuffer: MTLBuffer?
 
     // ── The shadow atlas ───────────────────────────────────────────────
@@ -309,14 +310,15 @@ extension SceneMetalRenderer {
         enum Kind { case card, skinned }
 
         case card(range: Range<Int>, uniforms: SceneLayerUniforms,
-                  texture: MTLTexture, normalMap: MTLTexture?)
+                  texture: MTLTexture, normalMap: MTLTexture?,
+                  heightMap: MTLTexture?)
         case skinned(range: Range<Int>, paletteOffset: Int,
                      uniforms: SceneLayerUniforms,
                      texture: MTLTexture, normalMap: MTLTexture?)
 
         var uniforms: SceneLayerUniforms {
             switch self {
-            case let .card(_, uniforms, _, _): return uniforms
+            case let .card(_, uniforms, _, _, _): return uniforms
             case let .skinned(_, _, uniforms, _, _): return uniforms
             }
         }
@@ -478,7 +480,8 @@ extension SceneMetalRenderer {
                 cardVertices.append(contentsOf: built.vertices)
                 draws.append(.card(range: start..<cardVertices.count,
                                    uniforms: built.uniforms, texture: built.texture,
-                                   normalMap: built.normalMap))
+                                   normalMap: built.normalMap,
+                                   heightMap: built.heightMap))
                 continue
             }
             // A rig is a SET of sprites, each with its own palette and possibly
@@ -531,7 +534,7 @@ extension SceneMetalRenderer {
         for draw in draws {
             var layerUniforms = draw.uniforms
             switch draw {
-            case let .card(range, _, texture, normalMap):
+            case let .card(range, _, texture, normalMap, heightMap):
                 guard let cardBuffer else { continue }
                 if boundKind != .card {
                     encoder.setRenderPipelineState(cardPipeline)
@@ -563,6 +566,12 @@ extension SceneMetalRenderer {
                 // they are not the same question.
                 encoder.setFragmentTexture(normalMap ?? placeholderNormalTexture(),
                                            index: 2)
+                // THE SAME RULE, ONE SLOT ALONG. The flag decides whether the
+                // height field is SAMPLED; this decides whether it is BOUND,
+                // and leaving a declared argument unbound is what aborts
+                // Metal's validation layer whether or not the shader reads it.
+                encoder.setFragmentTexture(heightMap ?? placeholderHeightTexture(),
+                                           index: 4)
                 encoder.drawPrimitives(type: .triangle,
                                        vertexStart: range.lowerBound,
                                        vertexCount: range.count)
@@ -584,6 +593,12 @@ extension SceneMetalRenderer {
                 encoder.setFragmentTexture(texture, index: 0)
                 encoder.setFragmentTexture(normalMap ?? placeholderNormalTexture(),
                                            index: 2)
+                // ALWAYS THE PLACEHOLDER. Parallax is a LAYER's material and a
+                // rig is many sprites on one layer, so a rig instance never
+                // sets the parallax bits -- but the fragment shader is shared,
+                // it declares texture(4), and an unbound declared argument
+                // aborts validation regardless of which branch runs.
+                encoder.setFragmentTexture(placeholderHeightTexture(), index: 4)
                 encoder.drawPrimitives(type: .triangle,
                                        vertexStart: range.lowerBound,
                                        vertexCount: range.count)
@@ -703,6 +718,18 @@ private extension SceneMetalRenderer {
         return assets.asset(for: assetID)?.texture
     }
 
+    /// The standalone texture of the height field, never an atlas page.
+    ///
+    /// UNATLASED FOR A STRONGER REASON THAN THE NORMAL MAP'S. A normal map
+    /// cannot be atlased because a linear sampler BLEEDS a neighbour in at the
+    /// tile's edge; a height map cannot because the march deliberately reads
+    /// texels far from the fragment's own, so a neighbour packed edge to edge
+    /// would not be bled into -- it would be walked into and drawn.
+    func heightTexture(_ assetID: UUID?, assets: AssetManager) -> MTLTexture? {
+        guard let assetID else { return nil }
+        return assets.asset(for: assetID)?.texture
+    }
+
     struct BuiltCard {
         var vertices: [SceneVertexIn]
         var uniforms: SceneLayerUniforms
@@ -711,6 +738,11 @@ private extension SceneMetalRenderer {
         /// page. Nil when the surface has none, which is when the shader takes
         /// the branch that leaves the picture exactly as it was.
         var normalMap: MTLTexture?
+        /// The height field the parallax march walks, if the layer names one
+        /// that still resolves. Nil also means "use the normal map's alpha, if
+        /// there is a normal map" -- that choice is made once, in
+        /// `materialFields`, and shows up here only as a texture or no texture.
+        var heightMap: MTLTexture?
     }
 
     /// A layer's card as two triangles in WORLD space, with the uniforms that
@@ -759,21 +791,69 @@ private extension SceneMetalRenderer {
             return nil
         }
 
+        // RESOLVED BEFORE THE CORNERS, because the shell below is sized from
+        // the result. A plate's map is the LAYER's: a plate is one PNG, so the
+        // layer and the artwork are the same surface; a rig is many, which is
+        // why its map hangs off `SceneImage` instead.
+        let normalMap = normalTexture(layer.material.normalMapAssetID, assets: assets)
+        let heightMap = heightTexture(layer.material.heightMapAssetID, assets: assets)
+        let fields = Self.materialFields(layer.material, normalMap: normalMap,
+                                         heightMap: heightMap)
+
+        // ── The silhouette shell ────────────────────────────────────────
+        //
+        // In `.silhouetteShell` the quad is grown by the depth of the height
+        // volume and its UVs run past [0, 1] to match, so the parallax march
+        // has somewhere to put relief that stands PROUD of where the card's
+        // edge was. The shader discards whatever the march does not fill, so
+        // the margin costs a band of rejected fragments and buys an outline
+        // that is the artwork's rather than the rectangle's.
+        //
+        // THE EXPANSION LIVES ONLY IN THIS VERTEX BUFFER, and that boundary is
+        // the whole of why the mode is safe. It does not reach
+        // `SceneViewProjection.cardPoint`'s idea of the card, the picking
+        // bounds, the framing, or the `SceneOccluder` this layer contributes to
+        // the shadow pass. Growing any of those would let a layer be selected
+        // from empty space and cast a shadow larger than itself -- the card IS
+        // the size the artist set; the shell is only the volume it may paint in.
+        //
+        // A MARGIN IN UV, CONVERTED TO LOCAL. `parallaxDepth` is a fraction of
+        // the artwork (the march has no other length it can express), so the
+        // half-extents scale by it rather than adding a distance.
+        //
+        // TAKEN FROM `fields`, NOT FROM THE MATERIAL, and that is the bug this
+        // line exists to not have. `materialFields` is where "is there really a
+        // height field to march against" is decided -- a layer can be set to
+        // the shell mode while its map is missing from disk, and asking the
+        // material would then grow the quad for a march the shader is not going
+        // to run and no clip flag is going to trim. The card would draw a
+        // smeared border of clamped edge texels, which looks like a rendering
+        // fault and is really a missing file. `fields.parallax.x` is zero
+        // unless the march is genuinely on, so the shell follows it.
+        // `fields.parallax.x` is zero unless the march is genuinely on, so
+        // ANDing the mode with it gives both halves of the question at once:
+        // only the shell grows the quad, and only when there is something to
+        // march against.
+        let margin = layer.material.parallaxMode.expandsCard ? fields.parallax.x : 0
+        let outer = half * (1 + 2 * margin)
+
         // Layer-local corners, in the same winding `SceneViewProjection`
         // already uses so the two cannot disagree about which way a card faces.
         let locals = [
-            SIMD2<Float>(-half.x,  half.y),
-            SIMD2<Float>( half.x,  half.y),
-            SIMD2<Float>( half.x, -half.y),
-            SIMD2<Float>(-half.x, -half.y),
+            SIMD2<Float>(-outer.x,  outer.y),
+            SIMD2<Float>( outer.x,  outer.y),
+            SIMD2<Float>( outer.x, -outer.y),
+            SIMD2<Float>(-outer.x, -outer.y),
         ]
         let worlds = locals.map { SceneViewProjection.cardPoint(layer: layer, local: $0) }
         // UV.y = 0 is the image's TOP, which is the corner at local +y. Same
         // convention as the PNG exporter, and the one place a card silently
         // renders upside down if it is taken the other way.
+        let lo = -margin
+        let hi = 1 + margin
         let uvs: [SIMD2<Float>] = [
-            SIMD2<Float>(0, 0), SIMD2<Float>(1, 0),
-            SIMD2<Float>(1, 1), SIMD2<Float>(0, 1),
+            SIMD2<Float>(lo, lo), SIMD2<Float>(hi, lo),
+            SIMD2<Float>(hi, hi), SIMD2<Float>(lo, hi),
         ]
 
         var vertices: [SceneVertexIn] = []
@@ -784,11 +864,6 @@ private extension SceneMetalRenderer {
 
         let plane = layer.lightingPlane
         let frame = layer.lightingTangent
-        // A PLATE'S MAP IS THE LAYER'S. A plate is one PNG, so the layer and
-        // the artwork are the same surface; a rig is many, which is why its
-        // map hangs off `SceneImage` instead.
-        let normalMap = normalTexture(layer.material.normalMapAssetID, assets: assets)
-        let fields = Self.materialFields(layer.material, normalMap: normalMap)
         // PREMULTIPLIED ON THE WAY IN. The atlas holds premultiplied artwork
         // and the blend is premultiplied source-over, so the opacity has to
         // scale colour and alpha together. Scaling alpha alone is the classic
@@ -803,10 +878,11 @@ private extension SceneMetalRenderer {
             shadowedMask: fields.shadowedMask,
             normalAndStrength: SIMD4<Float>(plane.normal, fields.normalStrength),
             tangentAndSign: SIMD4<Float>(frame.tangent, frame.handed),
-            material: fields.packed
+            material: fields.packed,
+            parallax: fields.parallax
         )
         return BuiltCard(vertices: vertices, uniforms: uniforms, texture: texture,
-                         normalMap: normalMap)
+                         normalMap: normalMap, heightMap: heightMap)
     }
 
     struct BuiltRig {
@@ -994,7 +1070,18 @@ private extension SceneMetalRenderer {
             // one PNG. Giving the whole rig one map would light the face by
             // the arm's bumps.
             let normalMap = normalTexture(posed.normalMapAssetID, assets: assets)
-            let fields = Self.materialFields(layer.material, normalMap: normalMap)
+            // PARALLAX IS FORCED OFF HERE, and it is forced rather than merely
+            // left unset. The march is a LAYER's material and a rig instance is
+            // many sprites sharing one layer, so the layer's height field --
+            // which would be the whole rig's -- would displace the face by the
+            // arm's relief, the same fault that keeps normal maps per sprite
+            // two comments above. The inspector never offers the control for a
+            // rig; this is what makes that a guarantee rather than a habit, for
+            // a layer whose content changed or whose file was hand-edited.
+            var material = layer.material
+            material.parallaxMode = .off
+            let fields = Self.materialFields(material, normalMap: normalMap,
+                                             heightMap: nil)
             let uniforms = SceneLayerUniforms(
                 uvRect: uvRect,
                 tint: SIMD4<Float>(posed.tintColor.x * alpha,
@@ -1007,7 +1094,8 @@ private extension SceneMetalRenderer {
                 shadowedMask: fields.shadowedMask,
                 normalAndStrength: SIMD4<Float>(plane.normal, fields.normalStrength),
                 tangentAndSign: SIMD4<Float>(frame.tangent, frame.handed),
-                material: fields.packed)
+                material: fields.packed,
+                parallax: fields.parallax)
 
             built.append(BuiltRig(vertices: vertices, palette: palette.matrices,
                                   uniforms: uniforms, texture: page,
@@ -1466,12 +1554,61 @@ private extension SceneMetalRenderer {
         return texture
     }
 
+    /// The stand-in bound at texture(4) when a surface has no height field.
+    ///
+    /// WHITE, AND NOT BLACK. A height of 1 puts the surface at the very TOP of
+    /// the volume, so the march's first test passes at the fragment's own texel
+    /// and the displacement is exactly zero. Black would put it at the floor,
+    /// and a future missing-flag bug would then displace the whole card by its
+    /// full depth -- a sprite visibly sliding off itself. The same reasoning
+    /// that makes the normal placeholder lavender rather than black: a
+    /// placeholder that is never read should still be the honest value, so that
+    /// the day it IS read the fault looks like nothing instead of like chaos.
+    func placeholderHeightTexture() -> MTLTexture? {
+        if let existing = emptyHeightTexture { return existing }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .r8Unorm, width: 1, height: 1, mipmapped: false)
+        descriptor.usage = .shaderRead
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        var top: [UInt8] = [255]
+        texture.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0,
+                        withBytes: &top, bytesPerRow: 1)
+        emptyHeightTexture = texture
+        return texture
+    }
+
     /// Bit 0 of `SceneLayerUniforms.materialFlags`, spelled once.
     ///
     /// The Metal side calls it `kSceneHasNormalMap`; the transcription harness
     /// checks the two agree, the way it already checks every field of every
     /// struct these two languages describe twice.
     static let hasNormalMapFlag: UInt32 = 1
+    /// Bits 1 to 5 of `materialFlags`, the Swift half of the `kScene*`
+    /// constants in `SceneShaders.metal`. One name per bit on each side, so
+    /// the two files can be read off against each other rather than counted.
+    static let hasHeightMapFlag: UInt32 = 2
+    static let heightFromNormalAlphaFlag: UInt32 = 4
+    static let parallaxClipFlag: UInt32 = 8
+    static let parallaxSelfShadowFlag: UInt32 = 16
+    static let heightInvertedFlag: UInt32 = 32
+
+    /// The loop bound the shader compiles against, spelled here so the uniform
+    /// can never exceed it. `kSceneMaxParallaxSteps` is the same number.
+    static let maxParallaxSteps: Float = 128
+    static let maxParallaxShadowSteps: Float = 32
+
+    /// What one Quality knob buys, in steps.
+    ///
+    /// TWO NUMBERS FROM ONE, because the march wants a floor and a ceiling and
+    /// interpolates between them by view angle, while an artist wants to know
+    /// whether this surface is worth the milliseconds. The floor is what a
+    /// head-on fragment costs and the ceiling what a grazing one does, which is
+    /// why the ceiling climbs so much further: the sweep across the artwork
+    /// grows with the angle and the sample count has to follow it.
+    static func parallaxSteps(quality: Float) -> (min: Float, max: Float) {
+        let q = min(max(quality, 0), 1)
+        return (min: 4 + 12 * q, max: 16 + (maxParallaxSteps - 16) * q)
+    }
 
     /// The material half of a layer's uniforms, built in ONE place.
     ///
@@ -1485,15 +1622,61 @@ private extension SceneMetalRenderer {
     /// THE FLAG FOLLOWS THE TEXTURE, NOT THE ASSET ID. An id that resolves to
     /// nothing is a surface with no map, which is exactly what a project whose
     /// normal map was deleted on disk should draw.
-    static func materialFields(_ material: SceneMaterial, normalMap: MTLTexture?)
-        -> (flags: UInt32, normalStrength: Float,
-            shadowedMask: UInt32, packed: SIMD4<Float>) {
+    /// THE SAME RULE GOVERNS THE PARALLAX BITS. A height map named by a layer
+    /// whose file has since been deleted is a surface with no height field, so
+    /// the bits stay clear and the card draws flat -- which is what a project
+    /// whose map went missing should render, and is why the decision is made
+    /// from the TEXTURE rather than from `parallaxMode` or an asset id.
+    ///
+    /// The alpha fallback is chosen here and nowhere else: with no height
+    /// texture but a normal map bound, the height comes from that map's alpha.
+    /// The two source bits are mutually exclusive by construction, which is
+    /// what lets `sceneHeightAt` read one texture or the other with no third
+    /// case for "both" that could only ever mean one of them.
+    static func materialFields(_ material: SceneMaterial,
+                               normalMap: MTLTexture?,
+                               heightMap: MTLTexture?)
+        -> (flags: UInt32, normalStrength: Float, shadowedMask: UInt32,
+            packed: SIMD4<Float>, parallax: SIMD4<Float>) {
         let clean = material.sanitized
-        let flags: UInt32 = normalMap == nil ? 0 : hasNormalMapFlag
+        var flags: UInt32 = normalMap == nil ? 0 : hasNormalMapFlag
+
+        // A march needs somewhere to march: a dedicated map, or a normal map
+        // whose alpha stands in for one.
+        let heightSource: UInt32?
+        if heightMap != nil {
+            heightSource = hasHeightMapFlag
+        } else if normalMap != nil {
+            heightSource = heightFromNormalAlphaFlag
+        } else {
+            heightSource = nil
+        }
+
+        var parallax = SIMD4<Float>.zero
+        var occlusionStrength: Float = 0
+        if clean.parallaxMode != .off, let heightSource {
+            flags |= heightSource
+            if clean.heightInverted { flags |= heightInvertedFlag }
+            if clean.parallaxMode.clips { flags |= parallaxClipFlag }
+            let steps = parallaxSteps(quality: clean.parallaxQuality)
+            if clean.parallaxSelfShadow { flags |= parallaxSelfShadowFlag }
+            // A quarter of the view march, capped: the self-shadow answers yes
+            // or no rather than where, so it does not need the resolution the
+            // surface does, and it runs once PER LIGHT rather than once per
+            // fragment. Spending the view march's budget again on every lamp
+            // is how a two-light scene costs three times what it looks like.
+            let shadowSteps = clean.parallaxSelfShadow
+                ? min(max(steps.max * 0.25, 4), maxParallaxShadowSteps)
+                : 0
+            parallax = SIMD4<Float>(clean.parallaxDepth, steps.min, steps.max, shadowSteps)
+            occlusionStrength = clean.parallaxOcclusionStrength
+        }
+
         return (flags,
                 normalMap == nil ? 0 : clean.normalStrength,
                 UInt32(clean.shadowedMask.rawValue),
-                SIMD4<Float>(clean.smoothness, clean.contrast, 0, 0))
+                SIMD4<Float>(clean.smoothness, clean.contrast, occlusionStrength, 0),
+                parallax)
     }
 
     /// Which row of the curve texture holds this light's falloff.

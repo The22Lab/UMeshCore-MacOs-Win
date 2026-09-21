@@ -445,6 +445,7 @@
 				INFOPLIST_FILE = "UltraMesh 2d animation/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = UltraMesh;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.graphics-design";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -485,6 +486,7 @@
 				INFOPLIST_FILE = "UltraMesh 2d animation/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = UltraMesh;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.graphics-design";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

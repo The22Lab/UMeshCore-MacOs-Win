@@ -197,6 +197,19 @@ struct SavedSceneMaterial: Codable {
     var contrast: Float?
     var shadowCastMask: UInt8?
     var shadowedMask: UInt8?
+    /// The parallax march, as a STRING and not an ordinal.
+    ///
+    /// Same rule `SavedSceneLayer.Kind` and `SceneLightUniform.kindCode`
+    /// already follow: an Int raw value would make the on-disk format depend
+    /// on the declaration order of a Swift enum, so inserting a mode between
+    /// two others would silently re-render every saved scene.
+    var parallaxMode: String?
+    var heightMapAssetID: UUID?
+    var parallaxDepth: Float?
+    var parallaxQuality: Float?
+    var heightInverted: Bool?
+    var parallaxSelfShadow: Bool?
+    var parallaxOcclusionStrength: Float?
 
     init(_ material: SceneMaterial) {
         normalMapAssetID = material.normalMapAssetID
@@ -205,6 +218,13 @@ struct SavedSceneMaterial: Codable {
         contrast = material.contrast
         shadowCastMask = material.shadowCastMask.rawValue
         shadowedMask = material.shadowedMask.rawValue
+        parallaxMode = material.parallaxMode.rawValue
+        heightMapAssetID = material.heightMapAssetID
+        parallaxDepth = material.parallaxDepth
+        parallaxQuality = material.parallaxQuality
+        heightInverted = material.heightInverted
+        parallaxSelfShadow = material.parallaxSelfShadow
+        parallaxOcclusionStrength = material.parallaxOcclusionStrength
     }
 
     /// Sanitised on the way in, not merely on the way to the GPU.
@@ -221,7 +241,19 @@ struct SavedSceneMaterial: Codable {
             smoothness: smoothness ?? 0,
             contrast: contrast ?? 0,
             shadowCastMask: SceneLightMask(rawValue: shadowCastMask ?? 0),
-            shadowedMask: SceneLightMask(rawValue: shadowedMask ?? 0)
+            shadowedMask: SceneLightMask(rawValue: shadowedMask ?? 0),
+            // A MODE THIS BUILD DOES NOT KNOW FALLS BACK TO `.off`, not to a
+            // nearby guess. A file written by a later build naming a march
+            // this one cannot run has to draw the surface it was drawing
+            // before marches existed -- picking the closest mode would render
+            // the artist a scene they never composed and let them save it back.
+            parallaxMode: parallaxMode.flatMap(SceneParallaxMode.init(rawValue:)) ?? .off,
+            heightMapAssetID: heightMapAssetID,
+            parallaxDepth: parallaxDepth ?? 0.05,
+            parallaxQuality: parallaxQuality ?? 0.5,
+            heightInverted: heightInverted ?? false,
+            parallaxSelfShadow: parallaxSelfShadow ?? false,
+            parallaxOcclusionStrength: parallaxOcclusionStrength ?? 0
         ).sanitized
     }
 }

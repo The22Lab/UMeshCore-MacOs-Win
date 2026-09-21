@@ -77,7 +77,10 @@ struct SceneLayerUniforms {
                                 // w normal-map strength
     float4 tangentAndSign;      // xyz image +x in world space,
                                 // w handedness for the bitangent
-    float4 material;            // x smoothness, y contrast, zw spare
+    float4 material;            // x smoothness, y contrast,
+                                // z parallax occlusion, w spare
+    float4 parallax;            // x depth (uv), y min steps, z max steps,
+                                // w self-shadow steps
 };
 
 // Bit 0 of `materialFlags`. A FLAG AND NOT A TEST ON STRENGTH, because the
@@ -86,6 +89,46 @@ struct SceneLayerUniforms {
 // and NOT on a tilted one -- measured, 826 of 4 000 random tilted cards move
 // by up to 1.2e-07. See `SceneLayerUniforms.materialFlags` for the whole of it.
 constant uint kSceneHasNormalMap = 1u;
+
+// ── The parallax bits ───────────────────────────────────────────────────
+//
+// FLAGS AND NOT TESTS ON THE NUMBERS, for the same reason bit 0 is. A surface
+// with no height field must take a path where nothing is sampled, nothing is
+// marched and nothing is normalised -- not a path where the march runs against
+// a neutral texture and happens to land back where it started. The second one
+// is a rounding error per pixel on every project that predates this feature,
+// and nobody would ever report it.
+//
+// The Swift half of these lives in `SceneMetalRenderer` as `hasHeightMapFlag`
+// and friends, one name per bit on each side.
+
+// A real height texture is bound at texture(4) and may be sampled.
+constant uint kSceneHasHeightMap = 2u;
+// No height texture, but the normal map carries height in its alpha. The two
+// are mutually exclusive and the renderer never sets both.
+constant uint kSceneHeightFromNormalAlpha = 4u;
+// Throw away fragments whose ray found no surface, or left the artwork. This
+// is what makes the OUTLINE follow the relief instead of staying a rectangle.
+constant uint kSceneParallaxClip = 8u;
+// March a second ray towards each light, from the hit point.
+constant uint kSceneParallaxSelfShadow = 16u;
+// The map stores depth (near is bright) rather than height.
+constant uint kSceneHeightInverted = 32u;
+
+// "Is there anything to march against at all." The one test the fragment
+// shader takes, so that the cheap path is decided once rather than by three
+// separate conditions that could disagree.
+constant uint kSceneParallaxAny = kSceneHasHeightMap | kSceneHeightFromNormalAlpha;
+
+// The loop bound the compiler can see. The real step count is a uniform and is
+// always <= this; a loop whose trip count is entirely unknown cannot be
+// unrolled or bounded, and on a fragment shader that is the difference between
+// a march and a hang. `SceneMetalRenderer.maxParallaxSteps` is the same number
+// on the Swift side, and it is what clamps the uniform.
+constant uint kSceneMaxParallaxSteps = 128u;
+// The self-shadow march is shorter for the same reason a shadow is cheaper
+// than a surface: it answers yes or no, not where.
+constant uint kSceneMaxParallaxShadowSteps = 32u;
 
 struct SceneVertexIn {
     float3 world;
@@ -385,11 +428,18 @@ static inline float lightLambert(const device SceneLightUniform &light,
 // surface pointing somewhere else entirely. `AssetManager` already loads every
 // asset as a standalone texture with `.SRGB: false` and `.origin: .topLeft`,
 // which is what a normal map wants and what an albedo page would have to undo.
+//
+// THE UV IS PASSED IN AND NOT READ FROM `in`, because the parallax march moves
+// it. Sampling `in.uv` here while the albedo is sampled at the displaced
+// coordinate would light one texel and paint another -- the relief and its
+// shading drift apart by exactly the displacement, which reads as a surface
+// whose highlights lag behind its bumps as the camera moves.
 static inline float3 sceneMappedNormal(constant SceneLayerUniforms &layer,
                                        SceneVertexOut in,
+                                       float2 uv,
                                        texture2d<float> normalMap,
                                        sampler mapSampler) {
-    const float3 texel = normalMap.sample(mapSampler, in.uv).xyz;
+    const float3 texel = normalMap.sample(mapSampler, uv).xyz;
     // The standard tangent-space decode: the texture stores [-1, 1] folded
     // into [0, 1], so a flat surface is the familiar lavender (0.5, 0.5, 1).
     float3 tangentNormal = texel * 2.0 - 1.0;
@@ -410,6 +460,222 @@ static inline float3 sceneMappedNormal(constant SceneLayerUniforms &layer,
     return (lengthSquared > 1e-12)
         ? mapped * rsqrt(lengthSquared)
         : layer.normalAndStrength.xyz;
+}
+
+// ── Parallax occlusion mapping ──────────────────────────────────────────
+//
+// A normal map tilts the LIGHT and leaves the GEOMETRY flat: orbit the camera
+// and the relief does not move, because there is nothing there to move. The
+// march below is what gives it depth. For each fragment it walks the view ray
+// down through a height field, finds where the ray first goes under the
+// surface, and shades THAT texel instead -- so a ridge hides what is behind it,
+// the whole surface parallaxes against the card as the camera swings, and in
+// the silhouette modes the outline itself follows the relief.
+//
+// ALL OF IT IS BEHIND `kSceneParallaxAny`. A surface with no height field takes
+// a path that samples nothing and marches nothing, which is the same promise
+// the normal map's own flag carries and the same reason: "renders exactly as
+// before" has to mean bit for bit, and a march against a neutral texture is
+// not bit for bit, it is a rounding error per pixel on every old project.
+
+/// Where the view ray met the surface.
+struct SceneParallaxHit {
+    /// The texel to shade. Every later sample -- albedo, normal map, the
+    /// self-shadow march -- uses this and not `in.uv`.
+    float2 uv;
+    /// How far down the volume the hit was: 0 at the top, 1 at the bottom.
+    float depth;
+    /// False when the ray ran out of steps without ever going under the
+    /// surface. Only the silhouette modes care, and for them it is the whole
+    /// point: a miss is a place where there IS no surface, so the fragment is
+    /// thrown away and the card's rectangle stops being the outline.
+    bool hit;
+};
+
+/// The height at a texel: 1 stands proud, 0 lies at the bottom of the volume.
+///
+/// WHITE IS HIGH, which is what a displacement bake writes, and
+/// `kSceneHeightInverted` is for the depth generators that write the other way
+/// round. Asking the artist to run a levels pass over every file they own would
+/// be the alternative.
+///
+/// TWO SOURCES, NEVER BOTH. A dedicated map is read from its red channel; with
+/// no dedicated map the height comes from the normal map's ALPHA, which is
+/// where most bakers already leave the field they generated the normals from.
+/// The renderer sets exactly one of the two bits, so this cannot read a
+/// texture that is not there.
+///
+/// THE DEGENERATE CASE IS A NO-OP, AND THAT IS WHY THE ALPHA FALLBACK IS SAFE
+/// TO OFFER. A normal map whose alpha is 1 everywhere describes a flat surface
+/// at the very top of the volume: the march's first test passes, the hit is at
+/// the fragment's own texel, and the displacement is zero. An artist who turns
+/// parallax on with such a map sees no change -- not garbage.
+static inline float sceneHeightAt(constant SceneLayerUniforms &layer,
+                                  float2 uv,
+                                  texture2d<float> heightMap,
+                                  texture2d<float> normalMap,
+                                  sampler mapSampler) {
+    float height;
+    if ((layer.materialFlags & kSceneHasHeightMap) != 0u) {
+        height = heightMap.sample(mapSampler, uv).r;
+    } else {
+        height = normalMap.sample(mapSampler, uv).a;
+    }
+    return ((layer.materialFlags & kSceneHeightInverted) != 0u) ? (1.0 - height) : height;
+}
+
+/// The view ray, in the surface's own tangent space.
+///
+/// THE V COMPONENT IS NEGATED, and this is the one line in the whole feature
+/// that is wrong in a way a still frame cannot show. `in.uv.y` grows DOWN the
+/// image while the bitangent points UP it -- the same flip the card's corners
+/// make ("uv.y = 0 is the image's TOP") and the same one the shadow test
+/// spells out as `(1 - b) * 0.5`. Taken at face value the relief displaces the
+/// wrong way along v: it looks like relief, it parallaxes as the camera moves,
+/// and it moves against the light instead of with it.
+static inline float3 sceneViewTangent(SceneVertexOut in, float3 eye) {
+    const float3 v = normalize(eye - in.world);
+    return float3(dot(v, in.tangent), dot(v, in.bitangent), dot(v, in.normal));
+}
+
+/// Steep parallax march with a secant refinement on the last two samples.
+///
+/// The refinement is what makes this OCCLUSION mapping rather than plain offset
+/// mapping: the coarse march brackets the crossing, and one linear solve
+/// between the two straddling samples puts the hit where it belongs. Without
+/// it the relief steps visibly along the ray -- the classic staircase that
+/// every screenshot of "parallax mapping done cheaply" has on it.
+///
+/// STEPS ARE SPENT WHERE THEY SHOW. Head on, the ray barely moves sideways and
+/// a handful of samples resolve it; at a grazing angle it crosses half the
+/// texture and needs all of them. `mix(max, min, |Vz|)` is that, and it is why
+/// the artist gets one Quality knob instead of two step counts.
+///
+/// THE GRAZING GUARD IS NOT OPTIONAL. The offset is proportional to 1/Vz, so a
+/// card seen edge on asks for an offset that tends to infinity and the first
+/// step lands outside the artwork. Flooring Vz at 0.1 caps the total sweep at
+/// ten times the depth, which is past anything that reads as surface.
+static inline SceneParallaxHit sceneParallaxMarch(constant SceneLayerUniforms &layer,
+                                                  SceneVertexOut in,
+                                                  float3 viewTangent,
+                                                  texture2d<float> heightMap,
+                                                  texture2d<float> normalMap,
+                                                  sampler mapSampler) {
+    SceneParallaxHit result;
+    result.uv = in.uv;
+    result.depth = 0.0;
+    result.hit = true;
+
+    const float depth = layer.parallax.x;
+    const float zGuard = max(viewTangent.z, 0.1);
+    float steps = mix(layer.parallax.z, layer.parallax.y, clamp(viewTangent.z, 0.0, 1.0));
+    steps = clamp(steps, 1.0, float(kSceneMaxParallaxSteps));
+    const uint stepCount = uint(steps);
+
+    // The sweep across the artwork, from the top of the volume to its floor.
+    //
+    // Derived rather than pattern-matched: descending a fraction `d` of the
+    // volume takes `d / Vz` along the ray, and the ray goes INTO the surface,
+    // which is `-V`. So the tangent displacement is `-V.xy * d / Vz`, and the
+    // v component flips again on its way into uv -- leaving `(-Vx, +Vy)`.
+    const float2 totalOffset = float2(-viewTangent.x, viewTangent.y) * (depth / zGuard);
+    const float2 deltaUV = totalOffset / float(stepCount);
+    const float deltaDepth = 1.0 / float(stepCount);
+
+    float2 current = in.uv;
+    float rayDepth = 0.0;
+    float surfaceDepth = 1.0 - sceneHeightAt(layer, current, heightMap, normalMap, mapSampler);
+    // Already solid at the fragment's own texel: nothing to march. This is the
+    // flat-alpha case above, and it exits having moved nothing.
+    bool hit = (surfaceDepth <= 0.0);
+    uint taken = 0u;
+
+    for (uint i = 0u; i < kSceneMaxParallaxSteps; ++i) {
+        if (hit || i >= stepCount) { break; }
+        current += deltaUV;
+        rayDepth += deltaDepth;
+        taken += 1u;
+        surfaceDepth = 1.0 - sceneHeightAt(layer, current, heightMap, normalMap, mapSampler);
+        hit = (rayDepth >= surfaceDepth);
+    }
+
+    if (hit && taken > 0u) {
+        const float2 previous = current - deltaUV;
+        // Signed gaps between the ray and the surface, straddling the
+        // crossing: `after` is at or below zero, `before` is above it.
+        const float after = surfaceDepth - rayDepth;
+        const float beforeSurface =
+            1.0 - sceneHeightAt(layer, previous, heightMap, normalMap, mapSampler);
+        const float before = beforeSurface - (rayDepth - deltaDepth);
+        const float span = after - before;
+        // A span of zero means the two samples agree, so either endpoint is
+        // the answer and the division is the only thing that could go wrong.
+        const float weight = (fabs(span) > 1e-8) ? clamp(after / span, 0.0, 1.0) : 0.0;
+        result.uv = previous * weight + current * (1.0 - weight);
+        result.depth = clamp(rayDepth - weight * deltaDepth, 0.0, 1.0);
+    } else {
+        result.uv = current;
+        result.depth = rayDepth;
+    }
+    result.hit = hit;
+    return result;
+}
+
+/// How much of a light the relief hides from itself.
+///
+/// A second march, from the hit point back UP towards the lamp: every texel
+/// whose surface stands above the ray is something between this crevice and
+/// the light. It is the half of the feature that makes displaced texture read
+/// as volume -- without it a deep relief lights as though it were painted on.
+///
+/// MULTIPLIED INTO `reach` AND NOT INTO `factor`, exactly as the occluder
+/// shadows are, and for the reason the fragment shader already records: the
+/// ambient is the floor a 2D set has instead of bounce light, and a shadow
+/// that can eat it takes the surface to black.
+///
+/// A LIGHT BELOW THE SURFACE RETURNS 1, not 0. Its `N.L` is already negative,
+/// so the shaped Lambert has taken the contribution away; darkening it again
+/// here would be the same fact counted twice, and it shows up as a terminator
+/// that is a hard black line instead of a rolled edge.
+///
+/// SOFTNESS FROM THE DISTANCE, not from more rays. A blocker found near the
+/// start of the march is a wall right beside the crevice and shadows it hard;
+/// one found at the end is far away and its edge has spread. Weighting by
+/// march position gives that for one multiply, where a multi-tap penumbra
+/// would multiply the whole cost by its tap count.
+static inline float sceneParallaxSelfShadow(constant SceneLayerUniforms &layer,
+                                            float2 uv, float depth,
+                                            float3 lightTangent,
+                                            texture2d<float> heightMap,
+                                            texture2d<float> normalMap,
+                                            sampler mapSampler) {
+    if (lightTangent.z <= 0.0 || depth <= 0.0) { return 1.0; }
+
+    float steps = clamp(layer.parallax.w, 1.0, float(kSceneMaxParallaxShadowSteps));
+    const uint stepCount = uint(steps);
+    const float zGuard = max(lightTangent.z, 0.1);
+    // Rise out of the volume in equal fractions, sweeping uv by the same
+    // geometry the view march used -- with the v flip once more.
+    const float riseStep = depth / float(stepCount);
+    const float2 deltaUV = float2(lightTangent.x, -lightTangent.y)
+                         * (layer.parallax.x / zGuard) * riseStep;
+
+    float occlusion = 0.0;
+    float rayDepth = depth;
+    float2 current = uv;
+    for (uint i = 0u; i < kSceneMaxParallaxShadowSteps; ++i) {
+        if (i >= stepCount) { break; }
+        rayDepth -= riseStep;
+        current += deltaUV;
+        if (rayDepth <= 0.0) { break; }
+        const float surfaceDepth =
+            1.0 - sceneHeightAt(layer, current, heightMap, normalMap, mapSampler);
+        if (surfaceDepth < rayDepth) {
+            const float nearness = 1.0 - float(i) / float(stepCount);
+            occlusion = max(occlusion, (rayDepth - surfaceDepth) * nearness);
+        }
+    }
+    return clamp(1.0 - occlusion, 0.0, 1.0);
 }
 
 // ── Shadows ─────────────────────────────────────────────────────────────
@@ -523,10 +789,84 @@ fragment float4 sceneCardFragment(SceneVertexOut in [[stage_in]],
                                   texture2d<float> curves [[texture(1)]],
                                   texture2d<float> normalMap [[texture(2)]],
                                   texture2d<float> shadowAtlas [[texture(3)]],
+                                  texture2d<float> heightMap [[texture(4)]],
                                   sampler atlasSampler [[sampler(0)]],
                                   sampler curveSampler [[sampler(1)]]) {
-    const float2 atlasUV = layer.uvRect.xy + in.uv * layer.uvRect.zw;
+    // ── The parallax march, before anything is sampled ──────────────────
+    //
+    // FIRST, because it decides WHICH TEXEL this fragment is. The albedo, the
+    // normal map and the self-shadow all have to agree on that; sampling the
+    // artwork at `in.uv` and only then displacing would light one texel and
+    // paint another.
+    //
+    // The whole block is behind one flag test, so a surface with no height
+    // field reaches the albedo sample having executed nothing but this
+    // comparison -- which is what keeps every project that predates the
+    // feature rendering bit for bit as it did.
+    float2 surfaceUV = in.uv;
+    float parallaxDepth = 0.0;
+    bool parallaxHit = true;
+    const bool marching = (layer.materialFlags & kSceneParallaxAny) != 0u;
+    if (marching) {
+        const float3 viewTangent = sceneViewTangent(in, frame.eyeAndNear.xyz);
+        // THE BACK OF A CARD IS FLAT, and that is the honest answer rather
+        // than a shortcut. The relief stands out of the FRONT of the surface;
+        // seen from behind there is nothing standing out towards the viewer to
+        // march through. Marching anyway would need a negative step and would
+        // carve the relief inwards, which is a surface nobody authored.
+        if (viewTangent.z > 0.0) {
+            const SceneParallaxHit march =
+                sceneParallaxMarch(layer, in, viewTangent, heightMap, normalMap, atlasSampler);
+            surfaceUV = march.uv;
+            parallaxDepth = march.depth;
+            parallaxHit = march.hit;
+        }
+    }
+
+    // ── The silhouette ──────────────────────────────────────────────────
+    //
+    // A ray that found no surface, or that walked off the edge of the
+    // artwork, is a place where there IS nothing -- so the fragment goes, and
+    // the card's rectangle stops being the outline. This is the entire
+    // difference between parallax occlusion mapping and SILHOUETTE parallax
+    // occlusion mapping, and it costs one comparison and a discard.
+    //
+    // ON THE SHELL the quad was grown by the depth before it was drawn (see
+    // `SceneMetalRenderer.cardGeometry`), so `in.uv` arrives outside [0, 1]
+    // around the border and most of that margin discards -- which is how the
+    // relief comes to stand PROUD of where the card's edge used to be.
+    if ((layer.materialFlags & kSceneParallaxClip) != 0u) {
+        if (!parallaxHit || any(surfaceUV < float2(0.0)) || any(surfaceUV > float2(1.0))) {
+            discard_fragment();
+        }
+    }
+
+    // CLAMPED, NOT WRAPPED. The atlas packs unrelated artwork
+    // edge to edge, so a march that leaves the card's own tile does not fade
+    // into a neighbour -- it walks into it and draws it. The clamp keeps the
+    // displacement inside the artwork; the silhouette modes above have already
+    // thrown those fragments away, so for them this changes nothing.
+    //
+    // AND IT IS WHAT THE NORMAL MAP AND THE SELF-SHADOW READ TOO, not the raw
+    // `surfaceUV`. Whatever texel ends up PAINTED is the texel that has to be
+    // lit and shadowed; letting the albedo clamp while the relief kept marching
+    // would light the edge of an occlusion-mode card by a texel it is not
+    // showing.
+    const float2 albedoUV = clamp(surfaceUV, float2(0.0), float2(1.0));
+    const float2 atlasUV = layer.uvRect.xy + albedoUV * layer.uvRect.zw;
     float4 albedo = atlas.sample(atlasSampler, atlasUV) * layer.tint;
+
+    // Cheap ambient occlusion: how far down the ray landed. ON THE ALBEDO and
+    // before the lights, because it stands in for the light that never reaches
+    // the bottom of a crack. Applied to the lit result instead it would also
+    // dim the highlights sitting on the ridges, which is the one place the
+    // relief is supposed to be brightest.
+    //
+    // PREMULTIPLIED ARTWORK, so only rgb is scaled: touching alpha here would
+    // make a deep crevice transparent rather than dark.
+    if (marching && layer.material.z > 0.0) {
+        albedo.rgb *= 1.0 - layer.material.z * clamp(parallaxDepth, 0.0, 1.0);
+    }
 
     if (layer.receivesLight == 0u) { return albedo; }
 
@@ -545,8 +885,12 @@ fragment float4 sceneCardFragment(SceneVertexOut in [[stage_in]],
     // equivalent, it is untouched: no sample, no rotation, no normalise.
     float3 normal = layer.normalAndStrength.xyz;
     if ((layer.materialFlags & kSceneHasNormalMap) != 0u) {
-        normal = sceneMappedNormal(layer, in, normalMap, atlasSampler);
+        // AT THE DISPLACED TEXEL. Without the march this is `in.uv` exactly,
+        // so the old path is untouched.
+        normal = sceneMappedNormal(layer, in, albedoUV, normalMap, atlasSampler);
     }
+    const bool selfShadowing = marching
+        && (layer.materialFlags & kSceneParallaxSelfShadow) != 0u;
 
     for (uint i = 0; i < frame.lightCount; ++i) {
         const device SceneLightUniform &light = lights[i];
@@ -565,7 +909,34 @@ fragment float4 sceneCardFragment(SceneVertexOut in [[stage_in]],
         const float shadow = sceneShadowFactor(light, occluders, in.world,
                                                layer.shadowedMask,
                                                shadowAtlas, atlasSampler);
-        const float reach = a * shadow
+        // THE RELIEF'S OWN SHADOW, on the same footing as the occluders' and
+        // in the same product. Two separate things can stand between this
+        // texel and the lamp -- another card, and the bump next to it -- and
+        // the light that gets past both is the light that gets past each.
+        float selfShadow = 1.0;
+        if (selfShadowing) {
+            float3 toLight;
+            if (light.kind == 2u) {
+                toLight = -light.directionAndInner.xyz;
+            } else {
+                float3 delta = light.originAndRadius.xyz - in.world;
+                // THE LIGHT'S 2.5D POSITION, not its true one -- the same
+                // flattening `lightAttenuation` and `lightLambert` apply
+                // before they do anything. A self-shadow cast from a position
+                // the rest of the shading does not believe in falls away from
+                // the highlight it belongs to.
+                delta.z *= light.cones.z;
+                const float len = length(delta);
+                toLight = (len > 1e-6) ? (delta / len) : float3(0.0, 0.0, 1.0);
+            }
+            const float3 lightTangent = float3(dot(toLight, in.tangent),
+                                               dot(toLight, in.bitangent),
+                                               dot(toLight, in.normal));
+            selfShadow = sceneParallaxSelfShadow(layer, albedoUV, parallaxDepth,
+                                                 lightTangent, heightMap,
+                                                 normalMap, atlasSampler);
+        }
+        const float reach = a * shadow * selfShadow
             * lightLambert(light, in.world, normal,
                            layer.material.x, layer.material.y);
         const float3 emission = light.tintAndBand.rgb * reach;

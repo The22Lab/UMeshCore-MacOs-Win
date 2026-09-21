@@ -182,6 +182,10 @@ struct SceneLayerUniforms {
     var tint: SIMD4<Float>
     var lightMask: UInt32
     var receivesLight: UInt32
+    /// What this surface has, one bit each -- see `SceneMetalRenderer`'s
+    /// `hasNormalMapFlag` and friends, which are the Swift half of the
+    /// `kScene*` constants the shader compares against.
+    ///
     /// Bit 0: a normal map is bound at texture(2) and the shader may sample it.
     ///
     /// A FLAG AND NOT A TEST ON `normalStrength`. The whole of this feature
@@ -220,8 +224,21 @@ struct SceneLayerUniforms {
     /// from the wrong side -- plausible in a still, wrong the moment a light
     /// moves across it.
     var tangentAndSign: SIMD4<Float> = SIMD4<Float>(1, 0, 0, 1)
-    /// x smoothness, y contrast, zw spare.
+    /// x smoothness, y contrast, z parallax occlusion strength, w spare.
     var material: SIMD4<Float> = .zero
+    /// x depth of the height volume in UV units, y minimum march steps,
+    /// z maximum march steps, w steps of the self-shadow march.
+    ///
+    /// ZERO WHEN THERE IS NO MARCH, and that is not merely tidy: the shader
+    /// reaches this field only inside the parallax branch, so a stale depth
+    /// left here by a layer that turned the feature off would be read by
+    /// nothing -- until the day a new flag opens a second door onto it. The
+    /// cost of keeping it honest is one `.zero`.
+    ///
+    /// MIN AND MAX AS FLOATS, not as uints. They are interpolated against the
+    /// view angle (`mix(max, min, |Vz|)`) before anything counts with them, so
+    /// storing them as integers would only mean converting them back.
+    var parallax: SIMD4<Float> = .zero
 }
 
 /// One vertex of a card or a skinned sprite, in WORLD space.

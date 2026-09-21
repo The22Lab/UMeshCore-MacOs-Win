@@ -2,92 +2,83 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>$(DEVELOPMENT_LANGUAGE)</string>
-    <key>CFBundleDisplayName</key>
-    <string>UltraMesh</string>
-    <key>CFBundleDocumentTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleTypeName</key>
-            <string>UltraMesh Project</string>
-            <key>CFBundleTypeRole</key>
-            <string>Editor</string>
-            <key>LSHandlerRank</key>
-            <string>Owner</string>
-            <key>LSItemContentTypes</key>
-            <array>
-                <string>com.the22lab.ultramesh.project</string>
-            </array>
-        </dict>
-    </array>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>$(PRODUCT_NAME)</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>$(MARKETING_VERSION)</string>
-    <key>CFBundleVersion</key>
-    <string>$(CURRENT_PROJECT_VERSION)</string>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.graphics-design</string>
-    <key>NSHumanReadableCopyright</key>
-    <string></string>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
-    <key>UIApplicationSupportsIndirectInputEvents</key>
-    <true/>
-    <!-- Without these two a project saved on iPad lands in a Documents folder
-         nothing can see: it does not appear in the Files app, and a .umesh
-         received from elsewhere cannot be opened in place. Saving worked and
-         the file was simply unreachable afterwards. -->
-    <!-- Opt in to frame rates above 60Hz on ProMotion. This is NOT what was
-         causing the canvas to judder — that was the viewport asking for extra
-         frames by hand, see TouchInputMTKView — and iPad Pro reaches 120Hz
-         without it. It is here because it is the documented gate on iPhone,
-         and its absence would silently cap a ProMotion phone at 60. -->
-    <key>CADisableMinimumFrameDurationOnPhone</key>
-    <true/>
-    <key>UIFileSharingEnabled</key>
-    <true/>
-    <key>LSSupportsOpeningDocumentsInPlace</key>
-    <true/>
-    <key>UILaunchScreen</key>
-    <dict/>
-    <key>UIRequiresFullScreen</key>
-    <false/>
-    <key>UISupportedInterfaceOrientations</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationPortraitUpsideDown</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-    </array>
-    <key>UTExportedTypeDeclarations</key>
-    <array>
-        <dict>
-            <key>UTTypeConformsTo</key>
-            <array>
-                <string>com.apple.package</string>
-            </array>
-            <key>UTTypeDescription</key>
-            <string>UltraMesh Project</string>
-            <key>UTTypeIdentifier</key>
-            <string>com.the22lab.ultramesh.project</string>
-            <key>UTTypeTagSpecification</key>
-            <dict>
-                <key>public.filename-extension</key>
-                <array>
-                    <string>umesh</string>
-                </array>
-            </dict>
-        </dict>
-    </array>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>UltraMesh</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>UltraMesh Project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.the22lab.ultramesh.project</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.graphics-design</string>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string></string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiresFullScreen</key>
+	<false/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>UltraMesh Project</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.the22lab.ultramesh.project</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>umesh</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

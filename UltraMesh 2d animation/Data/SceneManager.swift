@@ -543,22 +543,30 @@ final class SceneManager: ObservableObject {
     /// is shared — it saves and reloads like any other — but the rig never
     /// learns about it.
     @discardableResult
-    /// `normalMaps` pairs artwork ids to their relief, resolved by the caller
-    /// — `SceneManager` holds no `AssetManager`, and giving it one to answer a
-    /// naming question would be a dependency earned by nothing.
+    /// `normalMaps` and `heightMaps` pair artwork ids to their relief,
+    /// resolved by the caller — `SceneManager` holds no `AssetManager`, and
+    /// giving it one to answer a naming question would be a dependency earned
+    /// by nothing.
     func addScenePlates(assets: [TextureAsset], to compositionID: UUID,
-                        normalMaps: [UUID: UUID] = [:]) -> [UUID] {
+                        normalMaps: [UUID: UUID] = [:],
+                        heightMaps: [UUID: UUID] = [:]) -> [UUID] {
         guard let composition = sceneCompositions.first(where: { $0.id == compositionID }),
               !assets.isEmpty else { return [] }
         let z = defaultLayerZ(in: composition)
         var added: [UUID] = []
         var order = composition.frontSortingOrder
-        // NORMAL MAPS ARE NOT PLATES. `importPNGs` hands back everything it
-        // imported, including the `_n` file, and a card built from one would
+        // MAPS ARE NOT PLATES. `importPNGs` hands back everything it imported,
+        // including the `_n` and `_h` files, and a card built from one would
         // have no atlas rect to sample through.
         for asset in assets where asset.isPlaceable {
             var material = SceneMaterial.flat
             material.normalMapAssetID = normalMaps[asset.id]
+            // THE MAP IS ATTACHED, THE MARCH IS NOT TURNED ON. Importing
+            // `hero_h.png` says the artist HAS a height field, not that they
+            // want every plate parallaxed the moment it lands -- the mode stays
+            // `.off` until they ask for it in the inspector, so an import can
+            // never silently change what a scene costs or looks like.
+            material.heightMapAssetID = heightMaps[asset.id]
             let layer = SceneLayer(name: asset.name, positionZ: z,
                                    sortingOrder: order,
                                    material: material,

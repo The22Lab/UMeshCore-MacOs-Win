@@ -460,8 +460,16 @@ struct EditorLayoutView: View {
                 appState.assetManager.pairedNormalMapID(forArtworkNamed: asset.name)
                     .map { (asset.id, $0) }
             })
+            // The same pairing, one role along: `hero.png` + `hero_h.png`
+            // lands with its height field already attached. Resolved AFTER the
+            // whole import, like the normal maps, so the order the files
+            // arrived in does not decide whether the pair is found.
+            let heights = Dictionary(uniqueKeysWithValues: assets.compactMap { asset in
+                appState.assetManager.pairedHeightMapID(forArtworkNamed: asset.name)
+                    .map { (asset.id, $0) }
+            })
             appState.sceneManager.addScenePlates(assets: assets, to: composition.id,
-                                                 normalMaps: maps)
+                                                 normalMaps: maps, heightMaps: heights)
         }
     }
 

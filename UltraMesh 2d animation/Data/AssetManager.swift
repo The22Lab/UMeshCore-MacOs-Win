@@ -220,6 +220,11 @@ final class AssetManager: ObservableObject {
         assets.filter { $0.role == .normal }
     }
 
+    /// The assets that can be chosen AS a height field for the parallax march.
+    var heightMapAssets: [TextureAsset] {
+        assets.filter { $0.role == .height }
+    }
+
     /// A square of this asset's alpha, for the shadow atlas.
     ///
     /// FROM THE CACHE `alphaAt` ALREADY BUILDS, which is why this is cheap:
@@ -292,8 +297,33 @@ final class AssetManager: ObservableObject {
     ///
     /// Matched on the whole stem, so `hero_north` pairs with nothing.
     func pairedNormalMapID(forArtworkNamed name: String) -> UUID? {
+        pairedMapID(forArtworkNamed: name, role: .normal)
+    }
+
+    /// The height field whose filename pairs with this artwork's, if one exists.
+    ///
+    /// `hero.png` and `hero_h.png` belong together by the same convention that
+    /// already pairs `hero_n.png`, so importing the three together leaves the
+    /// plate with its whole surface attached and nothing to pick in a menu.
+    func pairedHeightMapID(forArtworkNamed name: String) -> UUID? {
+        pairedMapID(forArtworkNamed: name, role: .height)
+    }
+
+    /// The one lookup both pairings run.
+    ///
+    /// WRITTEN ONCE AND NOT TWICE, because the subtle half of it is the same
+    /// for both: the match is on the WHOLE STEM via `AssetRole.inferred`, so
+    /// `hero_north` pairs with nothing, and the search runs over the assets
+    /// already imported rather than over the filesystem. Two copies is two
+    /// places for one of them to reach for `contains` and start pairing a
+    /// compass with a character.
+    ///
+    /// Called when a sprite or a plate is CREATED, so the pairing lands as an
+    /// ordinary editable value -- not resolved at render time, which would
+    /// silently reinstate a map the artist had deliberately cleared.
+    private func pairedMapID(forArtworkNamed name: String, role: AssetRole) -> UUID? {
         let wanted = name.lowercased()
-        for candidate in assets where candidate.role == .normal {
+        for candidate in assets where candidate.role == role {
             if let inferred = AssetRole.inferred(fromFileName: candidate.name),
                inferred.pairedWith.lowercased() == wanted {
                 return candidate.id
