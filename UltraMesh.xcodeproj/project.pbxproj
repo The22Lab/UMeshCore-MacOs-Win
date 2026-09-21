@@ -1,0 +1,635 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		8C4F68B92F7C6FBE00BBE817 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8C4F68A32F7C6FBC00BBE817 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8C4F68AA2F7C6FBC00BBE817;
+			remoteInfo = "UltraMesh 2d animation";
+		};
+		8C4F68C32F7C6FBE00BBE817 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8C4F68A32F7C6FBC00BBE817 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8C4F68AA2F7C6FBC00BBE817;
+			remoteInfo = "UltraMesh 2d animation";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		8C4F68AB2F7C6FBC00BBE817 /* UltraMesh.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UltraMesh.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8C4F68B82F7C6FBE00BBE817 /* UltraMeshTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = UltraMeshTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8C4F68C22F7C6FBE00BBE817 /* UltraMeshUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = UltraMeshUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8C65B6062FD5C5F700566950 /* UMeshBinaryFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMeshBinaryFormat.swift; sourceTree = "<group>"; };
+		8C65B6072FD5C61100566950 /* BinaryWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinaryWriter.swift; sourceTree = "<group>"; };
+		8C65B6082FD5C62E00566950 /* ExportTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportTypes.swift; sourceTree = "<group>"; };
+		8C65B6092FD5C66A00566950 /* BinaryExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinaryExporter.swift; sourceTree = "<group>"; };
+		8C65B60A2FD5C68F00566950 /* PNGSequenceExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PNGSequenceExporter.swift; sourceTree = "<group>"; };
+		8C65B60B2FD5C6A400566950 /* ExportManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportManager.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		8C7FE3D42FD405A9002B87C7 /* Exceptions for "UltraMesh 2d animation" folder in "UltraMesh" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 8C4F68AA2F7C6FBC00BBE817 /* UltraMesh */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		8C4F68AD2F7C6FBC00BBE817 /* UltraMesh 2d animation */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				8C7FE3D42FD405A9002B87C7 /* Exceptions for "UltraMesh 2d animation" folder in "UltraMesh" target */,
+			);
+			path = "UltraMesh 2d animation";
+			sourceTree = "<group>";
+		};
+		8C4F68BB2F7C6FBE00BBE817 /* UltraMesh 2d animationTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "UltraMesh 2d animationTests";
+			sourceTree = "<group>";
+		};
+		8C4F68C52F7C6FBE00BBE817 /* UltraMesh 2d animationUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "UltraMesh 2d animationUITests";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8C4F68A82F7C6FBC00BBE817 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8C4F68B52F7C6FBE00BBE817 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8C4F68BF2F7C6FBE00BBE817 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		8C4F68A22F7C6FBC00BBE817 = {
+			isa = PBXGroup;
+			children = (
+				8C4F68AD2F7C6FBC00BBE817 /* UltraMesh 2d animation */,
+				8C4F68BB2F7C6FBE00BBE817 /* UltraMesh 2d animationTests */,
+				8C4F68C52F7C6FBE00BBE817 /* UltraMesh 2d animationUITests */,
+				8C4F68AC2F7C6FBC00BBE817 /* Products */,
+				8C65B6052FD5C5D900566950 /* Export */,
+			);
+			sourceTree = "<group>";
+		};
+		8C4F68AC2F7C6FBC00BBE817 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8C4F68AB2F7C6FBC00BBE817 /* UltraMesh.app */,
+				8C4F68B82F7C6FBE00BBE817 /* UltraMeshTests.xctest */,
+				8C4F68C22F7C6FBE00BBE817 /* UltraMeshUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		8C65B6052FD5C5D900566950 /* Export */ = {
+			isa = PBXGroup;
+			children = (
+				8C65B6062FD5C5F700566950 /* UMeshBinaryFormat.swift */,
+				8C65B6072FD5C61100566950 /* BinaryWriter.swift */,
+				8C65B6082FD5C62E00566950 /* ExportTypes.swift */,
+				8C65B6092FD5C66A00566950 /* BinaryExporter.swift */,
+				8C65B60A2FD5C68F00566950 /* PNGSequenceExporter.swift */,
+				8C65B60B2FD5C6A400566950 /* ExportManager.swift */,
+			);
+			path = Export;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		8C4F68AA2F7C6FBC00BBE817 /* UltraMesh */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8C4F68CC2F7C6FBE00BBE817 /* Build configuration list for PBXNativeTarget "UltraMesh" */;
+			buildPhases = (
+				8C4F68A72F7C6FBC00BBE817 /* Sources */,
+				8C4F68A82F7C6FBC00BBE817 /* Frameworks */,
+				8C4F68A92F7C6FBC00BBE817 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				8C4F68AD2F7C6FBC00BBE817 /* UltraMesh 2d animation */,
+			);
+			name = UltraMesh;
+			packageProductDependencies = (
+			);
+			productName = "UltraMesh 2d animation";
+			productReference = 8C4F68AB2F7C6FBC00BBE817 /* UltraMesh.app */;
+			productType = "com.apple.product-type.application";
+		};
+		8C4F68B72F7C6FBE00BBE817 /* UltraMeshTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8C4F68CF2F7C6FBE00BBE817 /* Build configuration list for PBXNativeTarget "UltraMeshTests" */;
+			buildPhases = (
+				8C4F68B42F7C6FBE00BBE817 /* Sources */,
+				8C4F68B52F7C6FBE00BBE817 /* Frameworks */,
+				8C4F68B62F7C6FBE00BBE817 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8C4F68BA2F7C6FBE00BBE817 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				8C4F68BB2F7C6FBE00BBE817 /* UltraMesh 2d animationTests */,
+			);
+			name = UltraMeshTests;
+			packageProductDependencies = (
+			);
+			productName = "UltraMesh 2d animationTests";
+			productReference = 8C4F68B82F7C6FBE00BBE817 /* UltraMeshTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		8C4F68C12F7C6FBE00BBE817 /* UltraMeshUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8C4F68D22F7C6FBE00BBE817 /* Build configuration list for PBXNativeTarget "UltraMeshUITests" */;
+			buildPhases = (
+				8C4F68BE2F7C6FBE00BBE817 /* Sources */,
+				8C4F68BF2F7C6FBE00BBE817 /* Frameworks */,
+				8C4F68C02F7C6FBE00BBE817 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8C4F68C42F7C6FBE00BBE817 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				8C4F68C52F7C6FBE00BBE817 /* UltraMesh 2d animationUITests */,
+			);
+			name = UltraMeshUITests;
+			packageProductDependencies = (
+			);
+			productName = "UltraMesh 2d animationUITests";
+			productReference = 8C4F68C22F7C6FBE00BBE817 /* UltraMeshUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		8C4F68A32F7C6FBC00BBE817 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2640;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					8C4F68AA2F7C6FBC00BBE817 = {
+						CreatedOnToolsVersion = 26.4;
+					};
+					8C4F68B72F7C6FBE00BBE817 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = 8C4F68AA2F7C6FBC00BBE817;
+					};
+					8C4F68C12F7C6FBE00BBE817 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = 8C4F68AA2F7C6FBC00BBE817;
+					};
+				};
+			};
+			buildConfigurationList = 8C4F68A62F7C6FBC00BBE817 /* Build configuration list for PBXProject "UltraMesh" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 8C4F68A22F7C6FBC00BBE817;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 8C4F68AC2F7C6FBC00BBE817 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8C4F68AA2F7C6FBC00BBE817 /* UltraMesh */,
+				8C4F68B72F7C6FBE00BBE817 /* UltraMeshTests */,
+				8C4F68C12F7C6FBE00BBE817 /* UltraMeshUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8C4F68A92F7C6FBC00BBE817 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8C4F68B62F7C6FBE00BBE817 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8C4F68C02F7C6FBE00BBE817 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8C4F68A72F7C6FBC00BBE817 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8C4F68B42F7C6FBE00BBE817 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8C4F68BE2F7C6FBE00BBE817 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		8C4F68BA2F7C6FBE00BBE817 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8C4F68AA2F7C6FBC00BBE817 /* UltraMesh */;
+			targetProxy = 8C4F68B92F7C6FBE00BBE817 /* PBXContainerItemProxy */;
+		};
+		8C4F68C42F7C6FBE00BBE817 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8C4F68AA2F7C6FBC00BBE817 /* UltraMesh */;
+			targetProxy = 8C4F68C32F7C6FBE00BBE817 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		8C4F68CA2F7C6FBE00BBE817 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = RRW4B37QTN;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		8C4F68CB2F7C6FBE00BBE817 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = RRW4B37QTN;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		8C4F68CD2F7C6FBE00BBE817 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = RRW4B37QTN;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "UltraMesh 2d animation/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = UltraMesh;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.graphics-design";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.the22lab.UltraMesh-2d-animation";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Debug;
+		};
+		8C4F68CE2F7C6FBE00BBE817 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = RRW4B37QTN;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "UltraMesh 2d animation/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = UltraMesh;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.graphics-design";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.the22lab.UltraMesh-2d-animation";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Release;
+		};
+		8C4F68D02F7C6FBE00BBE817 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = RRW4B37QTN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.the22lab.UltraMesh-2d-animationTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/UltraMesh.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/UltraMesh";
+			};
+			name = Debug;
+		};
+		8C4F68D12F7C6FBE00BBE817 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = RRW4B37QTN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.the22lab.UltraMesh-2d-animationTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/UltraMesh.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/UltraMesh";
+			};
+			name = Release;
+		};
+		8C4F68D32F7C6FBE00BBE817 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = RRW4B37QTN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.the22lab.UltraMesh-2d-animationUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "UltraMesh 2d animation";
+			};
+			name = Debug;
+		};
+		8C4F68D42F7C6FBE00BBE817 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = RRW4B37QTN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.the22lab.UltraMesh-2d-animationUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "UltraMesh 2d animation";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		8C4F68A62F7C6FBC00BBE817 /* Build configuration list for PBXProject "UltraMesh" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8C4F68CA2F7C6FBE00BBE817 /* Debug */,
+				8C4F68CB2F7C6FBE00BBE817 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8C4F68CC2F7C6FBE00BBE817 /* Build configuration list for PBXNativeTarget "UltraMesh" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8C4F68CD2F7C6FBE00BBE817 /* Debug */,
+				8C4F68CE2F7C6FBE00BBE817 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8C4F68CF2F7C6FBE00BBE817 /* Build configuration list for PBXNativeTarget "UltraMeshTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8C4F68D02F7C6FBE00BBE817 /* Debug */,
+				8C4F68D12F7C6FBE00BBE817 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8C4F68D22F7C6FBE00BBE817 /* Build configuration list for PBXNativeTarget "UltraMeshUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8C4F68D32F7C6FBE00BBE817 /* Debug */,
+				8C4F68D42F7C6FBE00BBE817 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 8C4F68A32F7C6FBC00BBE817 /* Project object */;
+}
