@@ -3,8 +3,14 @@
 // Shared small types used by the mesh subsystem, factored out of
 // `Data/Mesh.swift` since both MeshKernel.h and Mesh.h need MeshEdge.
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <optional>
+#include <vector>
+
+#include "umeshcore/Math/Vec.h"
 
 namespace umeshcore {
 
@@ -39,6 +45,26 @@ struct MeshTriangle {
     std::uint16_t c;
 
     bool operator==(const MeshTriangle&) const = default;
+
+    std::array<int, 3> indices() const { return {a, b, c}; }
+
+    std::array<std::uint16_t, 3> normalizedKey() const {
+        std::array<std::uint16_t, 3> key{a, b, c};
+        std::sort(key.begin(), key.end());
+        return key;
+    }
+
+    bool containsEdge(const MeshEdge& edge) const {
+        return MeshEdge(a, b) == edge || MeshEdge(b, c) == edge || MeshEdge(c, a) == edge;
+    }
+
+    std::optional<Vec2> centroid(const std::vector<Vec2>& vertices) const {
+        if (static_cast<std::size_t>(a) >= vertices.size() || static_cast<std::size_t>(b) >= vertices.size() ||
+            static_cast<std::size_t>(c) >= vertices.size()) {
+            return std::nullopt;
+        }
+        return (vertices[a] + vertices[b] + vertices[c]) / 3.0f;
+    }
 };
 
 } // namespace umeshcore

@@ -16,6 +16,7 @@ add_library(umeshcore STATIC
     Constraints/PhysicsConstraintSystem.cpp
     Mesh/MeshKernel.cpp
     Mesh/MeshValidator.cpp
+    Mesh/Mesh.cpp
 )
 
 target_include_directories(umeshcore

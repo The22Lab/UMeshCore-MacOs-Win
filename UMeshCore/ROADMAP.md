@@ -98,11 +98,20 @@ Special-case validation needs, carried over into each phase's own tests:
    singleton — see Risks), MeshPredicates (exact arithmetic), MeshKernel
    (triangulation), MeshValidator, Mesh (skinning), Skin/SkinResolver,
    AnimationCurve, Keyframe, AnimationClip, AnimationEvent, AnimationLibrary.
-   *Status: AnimationCurve/Keyframe/AnimationClip/AnimationEvent done and
-   tested (moved ahead of Bone/Skeleton in implementation order since Bone
-   directly owns an AnimationClip value and needs it as a complete type —
-   the two have no dependency in the other direction). Bone/Skeleton/
-   Constraints/Mesh next.*
+   *Status: AnimationCurve/Keyframe/AnimationClip/AnimationEvent, Bone/
+   Skeleton, all four constraint solvers, MeshPredicates, MeshKernel,
+   MeshValidator, and Mesh (skinning/sanitization/auto-bind) are done and
+   tested (Animation moved ahead of Bone/Skeleton in implementation order
+   since Bone directly owns an AnimationClip value and needs it as a
+   complete type — the two have no dependency in the other direction).
+   Deferred from Mesh.swift as editor-time (not per-frame-runtime)
+   conveniences: `generated()`/`generatedGrid` (procedural interior-point
+   mesh generation for a freshly-created sprite mesh), the manual-triangle-
+   face workflow (`sanitizedManualTriangles`,
+   `triangulatedIndicesWithInternalEdges`), and the Auto-Bind bone-fit
+   scoring heuristic (which bones a sprite *suggests* binding to — distinct
+   from `autoBindWeights`, which is ported and does the actual binding).
+   Skin/SkinResolver and AnimationLibrary are next.*
 2. **Editor logic** — `ToolInput` (the platform-neutral input boundary),
    `ToolManager` + all 8 tools (Select/Move/Rotate/Scale/Skew/Bone/Mesh/
    PhysicsPreview), gizmo hit-testing/metrics (every numeric constant —
