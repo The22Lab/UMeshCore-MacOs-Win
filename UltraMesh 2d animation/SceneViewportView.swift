@@ -173,6 +173,20 @@ struct SceneViewportView: View {
                         scene: sceneManager, assets: appState.assetManager,
                         composition: composition, frameIndex: frame,
                         frame: metalFrame,
+                        // BUILT FROM THE SAME CALL `gizmoOverlay(pixelSize:
+                        // fitted:)` that the hit-test/hover/drag code below
+                        // already calls repeatedly within this one `body`
+                        // pass — a fresh `SceneGizmoOverlay` value each time,
+                        // reading the same `sceneManager`/`composition`/
+                        // `tool`/`target`/`highlighted` state, so what the GPU
+                        // draws here and what a drag is tested against cannot
+                        // disagree. Drawn INSIDE this same Metal draw call —
+                        // not as a separate SwiftUI layer — is the fix for the
+                        // gizmo lagging the picture during a trackpad pinch,
+                        // orbit or two-finger pan: see
+                        // `SceneMetalRenderer.render(...)`'s gizmo-pass
+                        // comment for the rest of why.
+                        gizmo: gizmoOverlay(pixelSize: pixelSize, fitted: fitted)?.gizmoLayout(),
                         // TWO FINGERS PAN, exactly as they do on the iPad. The
                         // touch path calls the same `navigate` with the same
                         // finger count, so the two platforms cannot drift into
@@ -804,6 +818,9 @@ struct SceneViewportView: View {
                 // question it exists to answer with a guess.
                 if let metal = appState.sceneMetalRenderer,
                    let previewFrame = shotMetalFrame(pixelSize: previewPixelSize) {
+                    // NO `gizmo:` HERE, and that omission is the point: this
+                    // preview exists to show what the shot will export, so a
+                    // handle must never appear in it.
                     SceneMetalView(renderer: metal,
                                    scene: sceneManager, assets: appState.assetManager,
                                    composition: composition, frameIndex: frame,

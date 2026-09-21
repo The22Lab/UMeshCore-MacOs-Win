@@ -243,8 +243,24 @@ struct SceneGizmoOverlay: View {
 
     var body: some View {
         ZStack {
-            if let handles = handleSet() {
-                Canvas { context, _ in draw(handles, in: &context) }
+            // THE LIGHT'S DIAGRAM ONLY. The manipulator itself — axes, rings,
+            // planes — used to be drawn here too, by `Canvas`, and that is the
+            // whole of why it lagged the picture during a trackpad gesture:
+            // `Canvas` redraws on SwiftUI's own cadence, which the very same
+            // gesture handling stalls (see `CanvasActivity.
+            // drawIfDisplayLinkStalled()`), while the Metal picture underneath
+            // gets force-redrawn by hand. `SceneMetalRenderer.encodeGizmoPass`
+            // now draws the manipulator INSIDE that same forced draw call, from
+            // `gizmoLayout()` below — built from the exact same
+            // `handleSet()`-adjacent state, so it cannot disagree with the
+            // hit-testing/drag code that stays here.
+            //
+            // A light's own diagram stays SwiftUI: it is chrome describing
+            // what the light DOES, not a manipulator being actively dragged,
+            // and the cost of it trailing one frame during a stalled gesture
+            // reads very differently from a handle trailing the pointer.
+            if let handles = handleSet(), let light = handles.light {
+                Canvas { context, _ in drawLight(light, in: &context) }
                     .allowsHitTesting(false)
             }
         }
@@ -392,8 +408,73 @@ struct SceneGizmoOverlay: View {
     }
 
     /// The camera these handles are being drawn through.
+    ///
+    /// THE REAL ONE, and every drag reads it — `worldUnits`, `worldDelta`,
+    /// `worldAngle` all take `self.projection` on their own, straight from
+    /// here. `gizmoProjection(origin:real:viewSize:)` below builds a SECOND,
+    /// stabilised projection purely for where axes/rings/planes fall on
+    /// screen; it never reaches the drag math, so precision here is untouched.
     private var projection: SceneProjection {
         renderer.projection(viewpoint: viewpoint, pixelSize: pixelSize)
+    }
+
+    /// How wide the gizmo's OWN camera sees. Small — a few degrees, close to
+    /// orthographic — because the whole point is that it barely matters where
+    /// on screen the gizmo sits; every direction inside this cone looks nearly
+    /// the same regardless of camera position.
+    static let gizmoHalfFieldOfView: Float = 3 * .pi / 180
+
+    /// A second, stabilised projection for the gizmo's SHAPE only: same eye as
+    /// `real`, but pointed straight at `origin` with a narrow, fixed field of
+    /// view, instead of inheriting the scene's own — often wide — one.
+    ///
+    /// WHY THE SHAPE NEEDS ITS OWN CAMERA. `orientation()` never reads
+    /// position, so a ring's world direction cannot change when a layer moves
+    /// — that part was never the bug. What DOES change is how oblique a wide
+    /// perspective projection makes an off-centre object's local axes look:
+    /// centred, a ring facing the camera reads as a near-circle; pushed to the
+    /// edge of a wide FOV, the same ring can read as a thin, sharply tilted
+    /// ellipse, which an artist reasonably reads as "the ring changed which
+    /// axis it turns about" even though the maths never moved it. Recentring
+    /// the projection on the gizmo's own origin removes that skew at its
+    /// source — every axis is seen close to its own on-axis angle, the way it
+    /// would be if the object sat at the middle of the frame — and the result
+    /// is then slid back onto the object's true screen position as a rigid 2D
+    /// offset that touches nothing about depth or foreshortening.
+    ///
+    /// The camera's OWN roll/horizon is preserved by re-orthogonalising its
+    /// right/up against the new forward (Gram-Schmidt) rather than inventing a
+    /// fresh pair — so recentring never visibly spins the gizmo, it only
+    /// changes which way it is "squarely facing".
+    private func gizmoProjection(origin: SIMD3<Float>, real: SceneProjection,
+                                 viewSize: SIMD2<Float>) -> SceneProjection {
+        var forward = origin - real.eye
+        let length = simd_length(forward)
+        // The eye sitting exactly on the origin has no direction to look
+        // along — falls back to the real camera rather than dividing by zero.
+        guard length > 1e-4 else { return real }
+        forward /= length
+
+        // The real camera's own right/up, read off its view matrix's rows —
+        // a view matrix IS a basis in its rows by construction (see
+        // `SceneProjection`'s orthonormal-frame initialiser).
+        let view = real.viewMatrix
+        var right = SIMD3<Float>(view.columns.0.x, view.columns.1.x, view.columns.2.x)
+        right -= forward * simd_dot(right, forward)
+        if simd_length(right) < 1e-4 {
+            // Looking almost straight along the real camera's own up (or
+            // down): its right vector has nothing left once projected out of
+            // `forward`. A world axis stands in — which one only matters in
+            // that it be consistent, not which.
+            right = abs(forward.y) < 0.9 ? simd_cross(SIMD3<Float>(0, 1, 0), forward)
+                                          : simd_cross(SIMD3<Float>(1, 0, 0), forward)
+        }
+        right = simd_normalize(right)
+        let up = simd_cross(forward, right)
+
+        return SceneProjection(eye: real.eye, right: right, up: up, forward: forward,
+                               focalLength: (viewSize.y * 0.5) / tan(Self.gizmoHalfFieldOfView),
+                               nearZ: real.nearZ, farZ: 1_000_000, viewSize: viewSize)
     }
 
     /// Image pixels to view points.
@@ -441,6 +522,30 @@ struct SceneGizmoOverlay: View {
         // that shears every arrow it multiplies. That was the deformation.
         let axes = layer.orientation()
         return Basis(origin: layer.worldOrigin, x: axes.x, y: axes.y, z: axes.z)
+    }
+
+    /// The layer's MOVE axes, fixed to the world rather than to its own
+    /// rotation.
+    ///
+    /// Rotate, scale and shear all want `basis(for:)` — that is the whole
+    /// point of it, and the user confirms rotate reads correctly today. But
+    /// it means the translate arrows visibly spin with the card's own Z roll
+    /// and tilt, which is not what an artist reaching for "move" expects: the
+    /// handle that answers "where is X" should not change answer because the
+    /// card turned. So translate alone gets literal world axes, with the
+    /// card's origin as the only thing carried over.
+    private func worldBasis(for layer: SceneLayer) -> Basis {
+        Basis(origin: layer.worldOrigin,
+              x: SIMD3<Float>(1, 0, 0), y: SIMD3<Float>(0, 1, 0), z: SIMD3<Float>(0, 0, 1))
+    }
+
+    /// The one place "which basis does this tool draw and drag from" is
+    /// decided for a layer. Both `handleSet()` (drawing/hit-testing) and
+    /// `mutate(_:from:drag:point:)` (applying the drag) call this rather than
+    /// each making the choice themselves, so the arrows on screen and the
+    /// axes a drag moves along can never disagree.
+    private func translateBasis(for layer: SceneLayer) -> Basis {
+        tool == .translate ? worldBasis(for: layer) : basis(for: layer)
     }
 
     private func cameraBasis(_ camera: SceneCamera) -> Basis {
@@ -499,7 +604,8 @@ struct SceneGizmoOverlay: View {
     /// smoothed away: a ring cut by the near plane really does sweep off the
     /// view, and drawing it as though it did not would be the lie.
     private func ringArcs(normal: SIMD3<Float>, origin: SIMD3<Float>, radius: Float,
-                          projection: SceneProjection) -> [[CGPoint]] {
+                          projection: SceneProjection,
+                          screenOffset: SIMD2<Float> = .zero) -> [[CGPoint]] {
         let frame = Self.ringFrame(normal: normal)
         func world(_ index: Int) -> SIMD3<Float> {
             let a = Float(index % Self.ringSamples) / Float(Self.ringSamples) * 2 * .pi
@@ -512,7 +618,9 @@ struct SceneGizmoOverlay: View {
         for i in 0..<Self.ringSamples {
             let w0 = world(i), w1 = world(i + 1)
             let d0 = projection.depth(of: w0), d1 = projection.depth(of: w1)
-            if d0 >= near, let p = projection.project(w0) { current.append(toView(p)) }
+            if d0 >= near, let p = projection.project(w0) {
+                current.append(toView(p + screenOffset))
+            }
             guard (d0 >= near) != (d1 >= near) else { continue }
             // The crossing itself, nudged a hair towards the far side so the
             // projection's own `w > nearZ` guard — which is strict — still
@@ -521,7 +629,7 @@ struct SceneGizmoOverlay: View {
             let cut = w0 + (w1 - w0) * t
             let toward = simd_normalize(cut - projection.eye)
             if let p = projection.project(cut + toward * Self.nearNudge) {
-                current.append(toView(p))
+                current.append(toView(p + screenOffset))
             }
             if current.count >= 2 { arcs.append(current) }
             current = []
@@ -606,12 +714,36 @@ struct SceneGizmoOverlay: View {
         var isEnabled: Bool
     }
 
-    private func handleSet() -> HandleSet? {
+    /// Everything the gizmo looks like THIS pass, before any drawing or hit
+    /// testing happens: which basis is in play, the one uniform scale, the
+    /// real projection, and the gizmo's own stabilised projection plus the
+    /// screen offset that slides it back onto the object's true position.
+    ///
+    /// `handleSet()` (CPU: hit-testing, and the light diagram's own numbers)
+    /// and `gizmoLayout()` (the GPU's input) both start from EXACTLY this and
+    /// nowhere else — there is one place "what does the gizmo look like right
+    /// now" gets answered, so the shape a drag is measured against and the
+    /// shape the GPU draws cannot disagree.
+    private struct GizmoState {
+        var basis: Basis
+        var scale: Float
+        var realProjection: SceneProjection
+        /// Stabilised: same eye, recentred on `basis.origin`, narrow FOV.
+        /// Shape only — never read by drag math.
+        var projection: SceneProjection
+        var screenOffsetPx: SIMD2<Float>
+
+        func map(_ world: SIMD3<Float>) -> SIMD2<Float>? {
+            projection.project(world).map { $0 + screenOffsetPx }
+        }
+    }
+
+    private func gizmoState() -> GizmoState? {
         let basis: Basis
         switch target {
         case .layer:
             guard let layer = activeLayer, !layer.isHidden else { return nil }
-            basis = self.basis(for: layer)
+            basis = translateBasis(for: layer)
         case .light:
             // A DISABLED light still gets its handles. Switching one off is how
             // an artist compares two lightings, and a light you cannot move
@@ -630,16 +762,43 @@ struct SceneGizmoOverlay: View {
         // `basis` — which was just read off the element — and from the camera
         // as it is now. Nothing is carried over from the last frame, so the
         // handles cannot trail what they are attached to.
-        let projection = renderer.projection(viewpoint: viewpoint, pixelSize: pixelSize)
-        let map: (SIMD3<Float>) -> SIMD2<Float>? = { projection.project($0) }
+        let realProjection = renderer.projection(viewpoint: viewpoint, pixelSize: pixelSize)
+        guard let realOriginPx = realProjection.project(basis.origin) else { return nil }
+
+        // THE GIZMO'S OWN CAMERA, for shape only. Recentred on `basis.origin`
+        // with a narrow fixed FOV, so the axes/rings/planes below are built
+        // as though the object sat at the middle of a near-orthographic
+        // frame — no wide-FOV skew — and then sit back down on the object's
+        // true screen position by a rigid 2D offset. `eye` is identical to
+        // `realProjection`'s, so anything reading `.eye` reads the same point
+        // either way.
+        let projection = gizmoProjection(origin: basis.origin, real: realProjection,
+                                         viewSize: pixelSize)
+        // Where `forward` (the gizmo camera's principal axis) always lands —
+        // dead centre — versus where the object actually is on screen.
+        let screenOffsetPx = realOriginPx - pixelSize * 0.5
+
+        // ONE scale for the whole manipulator, from the REAL pivot depth —
+        // the gizmo's own narrow FOV must not change the constant on-screen
+        // size the artist relies on to grab a handle.
+        guard let scale = gizmoScale(pivot: basis.origin, projection: realProjection),
+              scale > 0 else { return nil }
+
+        return GizmoState(basis: basis, scale: scale, realProjection: realProjection,
+                          projection: projection, screenOffsetPx: screenOffsetPx)
+    }
+
+    private func handleSet() -> HandleSet? {
+        guard let state = gizmoState() else { return nil }
+        let basis = state.basis
+        let realProjection = state.realProjection
+        let projection = state.projection
+        let screenOffsetPx = state.screenOffsetPx
+        let scale = state.scale
+        let map = state.map
+
         guard let originPx = map(basis.origin) else { return nil }
         let origin = toView(originPx)
-
-        // ONE scale for the whole manipulator, from the pivot's depth. The rings
-        // share it with the arrows, so a ring is the circle the arrows' tips
-        // sweep and the gizmo reads as one object rather than four measurements.
-        guard let scale = gizmoScale(pivot: basis.origin, projection: projection),
-              scale > 0 else { return nil }
 
         var axes: [HandleID: Axis] = [:]
         var rings: [HandleID: [[CGPoint]]] = [:]
@@ -651,12 +810,15 @@ struct SceneGizmoOverlay: View {
             if let a = worldAxis(direction, from: basis.origin, scale: scale, map: map) {
                 axes[id] = a
             }
+            // Depth ordering reads off the REAL camera — "which end is nearer
+            // the eye" does not need the gizmo's stabilised one to answer.
             alpha[id] = depthAlpha(direction, from: basis.origin,
-                                   depthOf: { projection.depth(of: $0) })
+                                   depthOf: { realProjection.depth(of: $0) })
             // The ring for an axis turns ABOUT that axis, so the axis is the
             // circle's normal.
             let arcs = ringArcs(normal: direction, origin: basis.origin,
-                                radius: scale, projection: projection)
+                                radius: scale, projection: projection,
+                                screenOffset: screenOffsetPx)
             if !arcs.isEmpty { rings[id] = arcs }
         }
 
@@ -667,7 +829,7 @@ struct SceneGizmoOverlay: View {
             // to aim at, and the ray-plane intersection behind it becomes
             // ill-conditioned in the same breath. Offered or refused on the
             // same fact, rather than drawn and then failing when grabbed.
-            let facing = abs(simd_dot(simd_normalize(basis.origin - projection.eye), normal))
+            let facing = abs(simd_dot(simd_normalize(basis.origin - realProjection.eye), normal))
             guard facing > Self.minPlaneFacing else { continue }
             let (a, b) = Self.planeAxes(id, basis: basis)
             let lo = Self.planeOffset * scale
@@ -680,11 +842,110 @@ struct SceneGizmoOverlay: View {
             if screen.count == 4 { planes[id] = screen.map(toView) }
         }
 
+        // A light's OWN diagram — influence sphere, cone, beam — stays on the
+        // real projection: it is not part of this pass's stabilisation, only
+        // the shared axis/ring/plane manipulator is.
+        let realMap: (SIMD3<Float>) -> SIMD2<Float>? = { realProjection.project($0) }
+
         return HandleSet(origin: origin, axes: axes, ringRadius: Self.handlePixels,
                          rings: rings, planes: planes, alpha: alpha,
                          light: activeLight.flatMap {
-                             lightHandles($0, projection: projection, map: map)
+                             lightHandles($0, projection: realProjection, map: realMap)
                          })
+    }
+
+    // MARK: - GPU layout
+
+    /// The gizmo, as `SceneMetalRenderer.encodeGizmoPass` needs it: world-space
+    /// directions, colors and highlight state, plus the stabilised
+    /// `viewProjection`/screen-offset pair to place them on screen — no
+    /// `CGPoint`, no `Canvas`.
+    ///
+    /// Built from `gizmoState()`, the exact same starting point `handleSet()`
+    /// uses, so the manipulator the GPU draws and the manipulator the pointer
+    /// is tested against are the same shape by construction, not by two
+    /// people agreeing to keep two functions in step.
+    ///
+    /// No parameter: `pixelSize` is this overlay's own stored property, the
+    /// same one `gizmoState()` already reads through it — a second copy
+    /// passed in by the caller would be a second number that could disagree
+    /// with the one the hit-test half of this same instance is using.
+    func gizmoLayout() -> SceneGizmoLayout? {
+        guard let state = gizmoState() else { return nil }
+        let basis = state.basis
+
+        var axes: [HandleID: SceneGizmoLayout.AxisGeometry] = [:]
+        var rings: [HandleID: SceneGizmoLayout.RingGeometry] = [:]
+        var planes: [HandleID: SceneGizmoLayout.PlaneGeometry] = [:]
+
+        // Only the handles this TOOL actually shows — a rotate ring built
+        // while the translate tool is active would be extra vertices for a
+        // handle nobody can grab right now, since `handle(at:)` never offers
+        // it either.
+        switch tool {
+        case .translate, .scale, .shear:
+            if tool == .translate {
+                for id in Self.planeOrder {
+                    guard let normal = Self.planeNormal(id, basis: basis) else { continue }
+                    let facing = abs(simd_dot(simd_normalize(basis.origin - state.realProjection.eye),
+                                              normal))
+                    guard facing > Self.minPlaneFacing else { continue }
+                    let (a, b) = Self.planeAxes(id, basis: basis)
+                    planes[id] = SceneGizmoLayout.PlaneGeometry(
+                        a: a, b: b, color: Self.axisColor(id),
+                        highlighted: id == highlighted)
+                }
+            }
+            for id in Self.axisOrder {
+                guard let direction = basis.direction(id) else { continue }
+                // Refused on the same fact the screen-space arrow already is —
+                // an axis pointing at the eye has no honest direction to grab.
+                guard worldAxis(direction, from: basis.origin, scale: state.scale,
+                                map: state.map) != nil else { continue }
+                let away = depthAlpha(direction, from: basis.origin,
+                                      depthOf: { state.realProjection.depth(of: $0) })
+                axes[id] = SceneGizmoLayout.AxisGeometry(
+                    direction: direction, color: Self.axisColor(id),
+                    highlighted: id == highlighted, awayAlpha: Float(away),
+                    head: tool == .translate ? .arrow : .cube)
+            }
+        case .rotate:
+            for id in Self.axisOrder {
+                guard let direction = basis.direction(id) else { continue }
+                let away = depthAlpha(direction, from: basis.origin,
+                                      depthOf: { state.realProjection.depth(of: $0) })
+                rings[id] = SceneGizmoLayout.RingGeometry(
+                    normal: direction, color: Self.axisColor(id),
+                    highlighted: id == highlighted, awayAlpha: Float(away))
+            }
+        }
+
+        // THE FREE-MOVE / UNIFORM-SCALE HANDLE, at the origin — the white
+        // square `draw(_:in:)` used to fill for exactly these two tools.
+        let centerHandle: SceneGizmoLayout.CenterHandle? = (tool == .translate || tool == .scale)
+            ? SceneGizmoLayout.CenterHandle(
+                color: SIMD4<Float>(1, 1, 1, 1),
+                highlighted: highlighted == .free || highlighted == .uniform)
+            : nil
+
+        return SceneGizmoLayout(
+            tool: tool,
+            origin: basis.origin,
+            scale: state.scale,
+            axes: axes, rings: rings, planes: planes,
+            showViewRing: tool == .rotate,
+            viewRingColor: SIMD4<Float>(1, 1, 1, 0.75),
+            centerHandle: centerHandle,
+            eye: state.realProjection.eye,
+            // Safe to normalise unconditionally: `gizmoState()` only reaches
+            // here after `realProjection.project(basis.origin)` succeeded,
+            // which requires the point to be meaningfully in front of the eye
+            // (`w > nearZ > 0`) — so `basis.origin` and the eye cannot coincide.
+            forward: simd_normalize(basis.origin - state.realProjection.eye),
+            viewProjection: state.projection.viewProjection,
+            screenOffsetNDC: SIMD2<Float>(
+                2 * state.screenOffsetPx.x / pixelSize.x,
+                -2 * state.screenOffsetPx.y / pixelSize.y))
     }
 
     /// A light's visualisation, projected through the camera the canvas used.
@@ -773,98 +1034,28 @@ struct SceneGizmoOverlay: View {
             isEnabled: light.isEnabled)
     }
 
-    // MARK: - Drawing
+    // MARK: - Colour
 
     /// X red, Y green, Z blue — the convention every 3D editor shares, so the
     /// axis an artist already knows is the axis they get.
-    static func axisColor(_ id: HandleID) -> Color {
+    ///
+    /// RGBA FLOATS, NOT A SWIFTUI `Color`. The only consumer left is
+    /// `gizmoLayout()`, which hands these straight to the GPU as
+    /// vertex colour — going through `Color` and back would mean trusting a
+    /// colour-space round trip neither side needs, for a set of constants
+    /// that are already exactly the numbers the fragment shader wants.
+    static func axisColor(_ id: HandleID) -> SIMD4<Float> {
         switch id {
-        case .axisX: return Color(red: 0.94, green: 0.33, blue: 0.35)
-        case .axisY: return Color(red: 0.44, green: 0.83, blue: 0.36)
-        case .axisZ:         return Color(red: 0.35, green: 0.58, blue: 0.98)
+        case .axisX: return SIMD4<Float>(0.94, 0.33, 0.35, 1)
+        case .axisY: return SIMD4<Float>(0.44, 0.83, 0.36, 1)
+        case .axisZ:         return SIMD4<Float>(0.35, 0.58, 0.98, 1)
         // A plane takes the colour of the axis it is NORMAL to, which is the
         // convention every 3D editor shares: the blue quad is the one that
         // keeps Z fixed.
-        case .planeXY:       return Color(red: 0.35, green: 0.58, blue: 0.98)
-        case .planeXZ:       return Color(red: 0.44, green: 0.83, blue: 0.36)
-        case .planeYZ:       return Color(red: 0.94, green: 0.33, blue: 0.35)
-        default:             return Color(red: 0.98, green: 0.82, blue: 0.30)
-        }
-    }
-
-    private func draw(_ set: HandleSet, in context: inout GraphicsContext) {
-        // THE LIGHT'S DIAGRAM FIRST, UNDER THE MANIPULATOR. It says what the
-        // light does; the arrows say what the drag will do. Drawn under, so the
-        // handles an artist is reaching for are never behind a ring.
-        if let light = set.light { drawLight(light, in: &context) }
-        switch tool {
-        case .translate, .scale, .shear:
-            // Planes first, so an arrow crossing one is drawn over it — the
-            // same order they are hit-tested in, so what looks on top is what
-            // the pointer gets.
-            if tool == .translate {
-                for id in Self.planeOrder {
-                    guard let quad = set.planes[id], quad.count == 4 else { continue }
-                    var path = Path()
-                    path.move(to: quad[0])
-                    for p in quad.dropFirst() { path.addLine(to: p) }
-                    path.closeSubpath()
-                    let lit = id == highlighted
-                    let colour = Self.axisColor(id)
-                    context.fill(path, with: .color(colour.opacity(lit ? 0.55 : 0.22)))
-                    context.stroke(path, with: .color(colour.opacity(lit ? 1 : 0.75)),
-                                   lineWidth: lit ? 2.4 : 1.4)
-                }
-            }
-            for id in Self.axisOrder {
-                guard let axis = set.axes[id] else { continue }
-                let lit = id == highlighted
-                let color = Self.axisColor(id).opacity(lit ? 1 : (set.alpha[id] ?? 1))
-                var path = Path()
-                path.move(to: axis.origin)
-                path.addLine(to: axis.tip)
-                context.stroke(path, with: .color(color), lineWidth: lit ? Self.litWidth : 2)
-                let cap = handleCap(tool: tool, at: axis)
-                context.fill(cap, with: .color(color))
-                context.stroke(cap, with: .color(.black.opacity(0.55)), lineWidth: 1.4)
-            }
-            if tool == .translate || tool == .scale {
-                let r: CGFloat = 6
-                let square = Path(CGRect(x: set.origin.x - r, y: set.origin.y - r,
-                                         width: 2 * r, height: 2 * r))
-                context.fill(square, with: .color(.white.opacity(0.9)))
-                context.stroke(square, with: .color(.black.opacity(0.6)), lineWidth: 1.4)
-            }
-
-        case .rotate:
-            // THREE RINGS, IN SPACE. Each turns about its own axis, so each is
-            // a circle in the plane that axis is normal to — an ellipse once
-            // the camera is anywhere but square on to it, and a line when it is
-            // edge on. That is the whole of "like Unity": the shape of the ring
-            // tells you which way it will turn the thing before you touch it.
-            for id in Self.axisOrder {
-                let lit = id == highlighted
-                for arc in set.rings[id] ?? [] where arc.count >= 2 {
-                    var path = Path()
-                    path.move(to: arc[0])
-                    for p in arc.dropFirst() { path.addLine(to: p) }
-                    // NOT closed. An arc that was cut at the near plane is
-                    // open, and closing it is the chord that reads as a broken
-                    // ring. A ring wholly in front comes back as one arc whose
-                    // last sample is its first, so it still draws closed.
-                    context.stroke(path,
-                                   with: .color(Self.axisColor(id)
-                                       .opacity(lit ? 1 : (set.alpha[id] ?? 1))),
-                                   lineWidth: lit ? Self.litWidth : 2)
-                }
-            }
-            // The outer ring turns about the VIEW axis, which no world axis
-            // matches, so it is the one handle that is honestly screen-space.
-            var view = Path()
-            let outer = set.ringRadius * Self.viewRingScale
-            view.addEllipse(in: CGRect(x: set.origin.x - outer, y: set.origin.y - outer,
-                                       width: 2 * outer, height: 2 * outer))
-            context.stroke(view, with: .color(Color.white.opacity(0.75)), lineWidth: 1.5)
+        case .planeXY:       return SIMD4<Float>(0.35, 0.58, 0.98, 1)
+        case .planeXZ:       return SIMD4<Float>(0.44, 0.83, 0.36, 1)
+        case .planeYZ:       return SIMD4<Float>(0.94, 0.33, 0.35, 1)
+        default:             return SIMD4<Float>(0.98, 0.82, 0.30, 1)
         }
     }
 
@@ -965,35 +1156,6 @@ struct SceneGizmoOverlay: View {
             let dot = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
             context.fill(dot, with: .color(lit ? strong : tint.opacity(0.85)))
             context.stroke(dot, with: .color(.black.opacity(0.55)), lineWidth: 1.2)
-        }
-    }
-
-    private func handleCap(tool: SceneGizmoTool, at axis: Axis) -> Path {
-        let r: CGFloat = 5.5
-        switch tool {
-        case .translate:
-            // An arrow head, so the axis reads as a direction.
-            var p = Path()
-            let back = CGPoint(x: axis.tip.x - axis.direction.dx * 12,
-                               y: axis.tip.y - axis.direction.dy * 12)
-            let nx = -axis.direction.dy, ny = axis.direction.dx
-            p.move(to: axis.tip)
-            p.addLine(to: CGPoint(x: back.x + nx * 5, y: back.y + ny * 5))
-            p.addLine(to: CGPoint(x: back.x - nx * 5, y: back.y - ny * 5))
-            p.closeSubpath()
-            return p
-        case .scale:
-            return Path(CGRect(x: axis.tip.x - r, y: axis.tip.y - r,
-                               width: 2 * r, height: 2 * r))
-        case .shear:
-            // A slanted bar: the handle slides SIDEWAYS, and its shape says so.
-            var p = Path()
-            let nx = -axis.direction.dy, ny = axis.direction.dx
-            p.move(to: CGPoint(x: axis.tip.x - nx * 8, y: axis.tip.y - ny * 8))
-            p.addLine(to: CGPoint(x: axis.tip.x + nx * 8, y: axis.tip.y + ny * 8))
-            return p.strokedPath(.init(lineWidth: 4, lineCap: .round))
-        case .rotate:
-            return Path()
         }
     }
 
@@ -1229,56 +1391,54 @@ struct SceneGizmoOverlay: View {
         case .translate:
             switch drag.handle {
             case .axisX, .axisY, .axisZ:
-                // The axis as a WORLD direction, from the element's own
-                // rotation — the same vector the arrow was drawn along.
-                let basis = self.basis(for: start)
+                // The axis as a WORLD direction — fixed, per `translateBasis`,
+                // not the card's own rotated frame. So `amount` is already a
+                // literal world-space distance along a pure axis, and it is
+                // assigned straight to the one field that axis is: no further
+                // transform, because there is no rotation left to undo.
+                let basis = translateBasis(for: start)
                 guard let direction = basis.direction(drag.handle),
                       let amount = worldUnits(from: drag.start, to: point,
                                               origin: basis.origin, direction: direction)
                 else { return }
-                if drag.handle == .axisZ {
-                    layer.positionZ = start.positionZ + amount
-                } else {
-                    let local = drag.handle == .axisX
-                        ? SIMD2<Float>(amount, 0) : SIMD2<Float>(0, amount)
-                    // Through the card's own plane transform, so a rotated or
-                    // sheared card slides along the axis the handle DREW rather
-                    // than along an unrotated world axis.
-                    layer.position = start.position + start.planePoint(local)
+                switch drag.handle {
+                case .axisX: layer.position.x = start.position.x + amount
+                case .axisY: layer.position.y = start.position.y + amount
+                default:     layer.positionZ = start.positionZ + amount   // .axisZ
                 }
             case .planeXY, .planeXZ, .planeYZ:
                 // A plane handle is a ray meeting that plane — one exact
                 // answer, not two axis measurements run side by side.
-                let basis = self.basis(for: start)
+                let basis = translateBasis(for: start)
                 guard let normal = Self.planeNormal(drag.handle, basis: basis),
                       let delta = worldDelta(from: drag.start, to: point,
                                              planeAt: basis.origin, normal: normal)
                 else { return }
-                // Resolved back into the two axes the plane is spanned by, so
-                // the card moves in its own frame and Z stays Z.
+                // `a`/`b` are pure world axes now, so `da`/`db` are already
+                // world-space deltas along X/Y/Z — assigned directly, the same
+                // way the axis case above is.
                 let (a, b) = Self.planeAxes(drag.handle, basis: basis)
                 let da = simd_dot(delta, a), db = simd_dot(delta, b)
                 switch drag.handle {
                 case .planeXY:
-                    layer.position = start.position + start.planePoint(SIMD2<Float>(da, db))
+                    layer.position += SIMD2<Float>(da, db)
                 case .planeXZ:
-                    layer.position = start.position + start.planePoint(SIMD2<Float>(da, 0))
+                    layer.position.x = start.position.x + da
                     layer.positionZ = start.positionZ + db
                 default:
-                    layer.position = start.position + start.planePoint(SIMD2<Float>(0, da))
+                    layer.position.y = start.position.y + da
                     layer.positionZ = start.positionZ + db
                 }
             case .free:
-                // Free move slides the card in ITS OWN plane, which is the
-                // plane the card lies in — so it follows the pointer exactly
-                // instead of running two axis measurements at once.
-                let basis = self.basis(for: start)
+                // Free move slides the card across the WORLD XY plane through
+                // its origin — the plane the screen-space free-move square
+                // always meant, now that the basis is world axes rather than
+                // the card's own tilted plane.
+                let basis = translateBasis(for: start)
                 guard let delta = worldDelta(from: drag.start, to: point,
                                              planeAt: basis.origin, normal: basis.z)
                 else { return }
-                layer.position = start.position
-                    + start.planePoint(SIMD2<Float>(simd_dot(delta, basis.x),
-                                                    simd_dot(delta, basis.y)))
+                layer.position = start.position + SIMD2<Float>(delta.x, delta.y)
             default: break
             }
 
