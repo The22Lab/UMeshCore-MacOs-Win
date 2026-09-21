@@ -75,6 +75,83 @@ struct SceneMaterial: Equatable {
     /// Which light channels' shadows may darken this surface.
     var shadowedMask: SceneLightMask = []
 
+    // ── Parallax occlusion ──────────────────────────────────────────────
+    //
+    // A normal map lies about the light and tells the truth about the
+    // geometry: the surface is still flat, so orbiting the camera slides
+    // nothing. The parallax march is what makes the relief MOVE -- it walks
+    // the view ray through a height field and displaces the UV, so a bump
+    // occludes what is behind it and the whole surface has depth the camera
+    // can see around.
+    //
+    // OFF BY DEFAULT, AND THE DEFAULT IS A PROMISE, not a taste. `.off` leaves
+    // every parallax bit of `materialFlags` clear and the shader never enters
+    // the branch, so a project made before any of this renders bit for bit as
+    // it did -- the same guarantee `normalMapAssetID` already carries, for the
+    // same reason and by the same mechanism.
+
+    /// Which march this surface runs, if any.
+    var parallaxMode: SceneParallaxMode = .off
+
+    /// The height field this surface is displaced by.
+    ///
+    /// NIL IS NOT "NONE". Nil means "fall back to the normal map's alpha",
+    /// which is where a great many baking tools already put the height they
+    /// used to generate the normals -- so the commonest pair of files needs no
+    /// second pick in a menu. When there is no normal map either, nil really is
+    /// none and the march is skipped.
+    ///
+    /// A SEPARATE ASSET, not a channel of the sprite's own artwork, and never
+    /// atlased: the march reads texels far from the fragment's own, so a
+    /// neighbour packed edge to edge on an atlas page would be walked into
+    /// directly rather than merely bled from.
+    var heightMapAssetID: UUID?
+
+    /// How deep the volume under the surface is, in UV units.
+    ///
+    /// UV AND NOT WORLD UNITS. The march happens in tangent space against a
+    /// texture, so the only length it can express is a fraction of the
+    /// artwork, and a card scaled 3x wide keeps the same relief rather than
+    /// stretching it -- the same approximation the scale-free tangent frame
+    /// already makes for normal maps.
+    ///
+    /// Small numbers do the work: 0.05 is a pronounced brick, 0.2 is a cliff.
+    /// Above 0.5 the silhouette shell would have to be wider than the card.
+    var parallaxDepth: Float = 0.05
+
+    /// One knob, 0 to 1, that the renderer spends on step counts.
+    ///
+    /// ONE CONTROL AND NOT TWO. The march wants a minimum and a maximum step
+    /// count and interpolates between them by view angle; an artist wants to
+    /// know whether this surface is worth the milliseconds. Exposing both
+    /// numbers would be asking them to tune a ratio whose only wrong answers
+    /// are the ones where min exceeds max.
+    var parallaxQuality: Float = 0.5
+
+    /// True when the map stores DEPTH rather than HEIGHT.
+    ///
+    /// White is high is the convention this project reads, because it is what
+    /// a displacement bake writes. A depth generator writes the opposite --
+    /// near is bright -- and inverting it here beats asking an artist to run a
+    /// levels pass on every file they own.
+    var heightInverted: Bool = false
+
+    /// Whether the relief shadows itself.
+    ///
+    /// A second march, per light, from the hit point towards the lamp. It is
+    /// what turns a displaced texture into something that reads as volume --
+    /// and it is the expensive half of this feature, so it is off until asked.
+    var parallaxSelfShadow: Bool = false
+
+    /// How much the depth of the hit darkens the surface, in [0, 1].
+    ///
+    /// A cheap ambient occlusion: the march already knows how far down the
+    /// ray landed, so the crevices can be darkened for the cost of one lerp.
+    /// It applies to the ALBEDO, before the lights, because it stands in for
+    /// the light that never reaches the bottom of a crack -- put on the lit
+    /// result it would also darken the highlights sitting on the ridges.
+    var parallaxOcclusionStrength: Float = 0
+
     /// The surface Scene drew before any of this existed.
     static let flat = SceneMaterial()
 
@@ -96,6 +173,66 @@ struct SceneMaterial: Equatable {
         out.normalStrength = min(max(normalStrength.isFinite ? normalStrength : 1, 0), 8)
         out.smoothness = min(max(smoothness.isFinite ? smoothness : 0, 0), 1)
         out.contrast = min(max(contrast.isFinite ? contrast : 0, 0), 4)
+        // THE SAME REASONING, FOR THE SAME REASON. The march's loop bound and
+        // its step size both come from these, so a negative depth out of a
+        // hand-edited file walks the ray BACKWARDS out of the surface -- which
+        // does not look like a bad number, it looks like the artwork sliding
+        // off its own card. A quality of NaN makes the step count NaN and the
+        // loop runs zero times, which silently disables the feature on one
+        // layer and nowhere else.
+        out.parallaxDepth = min(max(parallaxDepth.isFinite ? parallaxDepth : 0.05, 0), 0.5)
+        out.parallaxQuality = min(max(parallaxQuality.isFinite ? parallaxQuality : 0.5, 0), 1)
+        out.parallaxOcclusionStrength =
+            min(max(parallaxOcclusionStrength.isFinite ? parallaxOcclusionStrength : 0, 0), 1)
         return out
     }
+}
+
+/// Which parallax march a surface runs.
+///
+/// ## Why the silhouette is two cases and not a toggle
+///
+/// A plain occlusion march can only move texels around INSIDE the card: the
+/// quad's outline stays the rectangle it always was, so a brick wall gets deep
+/// relief with a suspiciously straight edge. Making the outline follow the
+/// height field means discarding the fragments the ray misses, and there are
+/// two honest answers to "misses where", which look different enough that an
+/// artist has to be able to pick:
+///
+/// - `silhouetteClip` discards inside the card's own bounds. The outline can
+///   only bite INWARDS. Nothing about the geometry changes, so it costs one
+///   comparison and can never make a layer overlap something it did not
+///   overlap before.
+/// - `silhouetteShell` first grows the quad by the depth of the volume, so the
+///   relief can stand PROUD of where the card's edge used to be. That is the
+///   reading people mean by "silhouette POM" -- and it draws more pixels, and
+///   it lets a layer paint outside the rectangle its own gizmo shows.
+///
+/// A single toggle would have to choose one of those silently.
+enum SceneParallaxMode: String, Codable, CaseIterable, Identifiable {
+    /// The surface Scene has always drawn. No march, no branch, no cost.
+    case off
+    /// March and displace, clamped to the artwork. The outline stays the card.
+    case occlusion
+    /// March, displace, and discard where the ray leaves the volume.
+    case silhouetteClip
+    /// As above, on a quad grown by the depth, so the relief can overhang.
+    case silhouetteShell
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off:              return "Off"
+        case .occlusion:        return "Occlusion"
+        case .silhouetteClip:   return "Silhouette (clip)"
+        case .silhouetteShell:  return "Silhouette (shell)"
+        }
+    }
+
+    /// True when fragments whose ray found no surface are thrown away.
+    var clips: Bool { self == .silhouetteClip || self == .silhouetteShell }
+
+    /// True when the drawn quad is grown so the relief can overhang the card.
+    var expandsCard: Bool { self == .silhouetteShell }
 }

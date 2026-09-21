@@ -202,10 +202,13 @@ struct SceneInspectorView: View {
     /// The surface: its relief, and how the light falls across it.
     ///
     /// Shown for every layer, because smoothness and contrast describe how a
-    /// card sits in a set and apply whatever is drawn on it. Only the NORMAL
-    /// MAP row differs by kind: a plate is one PNG so its map is the layer's,
-    /// and a rig is many PNGs so each sprite carries its own and the row here
-    /// would be a control that quietly did the wrong thing.
+    /// card sits in a set and apply whatever is drawn on it. What differs by
+    /// kind is everything that names a MAP: a plate is one PNG so its normal
+    /// map and its height field are the layer's, and a rig is many PNGs, so a
+    /// row here would be a control that quietly did the wrong thing -- one
+    /// shared map lighting the face by the arm's bumps, or displacing it by
+    /// the arm's relief. The normal map row below and the whole PARALLAX
+    /// section are skipped for a rig for that one reason.
     @ViewBuilder
     private func materialSection(_ layer: SceneLayer) -> some View {
         title("MATERIAL")
@@ -255,6 +258,192 @@ struct SceneInspectorView: View {
         shadowMaskRow("Shadowed By", layer.material.shadowedMask) { next in
             update(layer) { $0.material.shadowedMask = next }
         }
+
+        parallaxSection(layer)
+    }
+
+    // MARK: - Parallax
+
+    /// The march that gives a flat PNG real depth.
+    ///
+    /// ## Why this is its own section and not three more rows of MATERIAL
+    ///
+    /// Everything above describes how a surface ANSWERS light. Parallax
+    /// describes where the surface IS: it moves texels, it can throw them away,
+    /// and it is the one control here that changes what the card covers. An
+    /// artist reaching for "why is my brick wall flat" is looking for a heading,
+    /// not for a fourth slider under a normal map picker.
+    ///
+    /// ## Per layer, and so only where a layer IS one PNG
+    ///
+    /// Same split the normal map already makes, and for a sharper reason: a
+    /// plate is one image so its height field is the layer's, while a rig is
+    /// many and one shared field would displace the face by the arm's relief.
+    /// The renderer forces the mode off for a rig regardless; this just stops
+    /// the panel offering a control that would quietly do nothing.
+    @ViewBuilder
+    private func parallaxSection(_ layer: SceneLayer) -> some View {
+        if case .rig = layer.content {
+            EmptyView()
+        } else {
+            title("PARALLAX")
+
+            parallaxModeRow(layer)
+
+            if layer.material.parallaxMode != .off {
+                heightMapRow(layer)
+
+                // NO HEIGHT FIELD, NO MARCH — and the panel says so rather
+                // than showing five live sliders over a surface the renderer
+                // is drawing flat. `materialFields` decides the same thing from
+                // the texture, so this is the inspector agreeing with the
+                // picture instead of describing a different one.
+                if heightSource(layer) == nil {
+                    Text("No height field. Import a file named …_h.png, or give "
+                         + "the normal map an alpha channel.")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(UM.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                materialSlider("Depth", layer.material.parallaxDepth,
+                               range: 0...0.5, format: .percent) { value, live in
+                    update(layer, live: live) { $0.material.parallaxDepth = value }
+                }
+                materialSlider("Quality", layer.material.parallaxQuality,
+                               range: 0...1, format: .percent) { value, live in
+                    update(layer, live: live) { $0.material.parallaxQuality = value }
+                }
+                materialSlider("Occlusion", layer.material.parallaxOcclusionStrength,
+                               range: 0...1, format: .percent) { value, live in
+                    update(layer, live: live) {
+                        $0.material.parallaxOcclusionStrength = value
+                    }
+                }
+
+                parallaxToggle("Invert Height", isOn: layer.material.heightInverted) { next in
+                    update(layer) { $0.material.heightInverted = next }
+                }
+                parallaxToggle("Self-Shadow", isOn: layer.material.parallaxSelfShadow) { next in
+                    update(layer) { $0.material.parallaxSelfShadow = next }
+                }
+
+                Text(parallaxHint(layer))
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(UM.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func parallaxToggle(_ label: String, isOn: Bool,
+                                set: @escaping (Bool) -> Void) -> some View {
+        Toggle(label, isOn: Binding(get: { isOn }, set: set))
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(UM.textPrimary)
+    }
+
+    private func parallaxModeRow(_ layer: SceneLayer) -> some View {
+        HStack(spacing: 8) {
+            Text("Mode")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(UM.textSecondary)
+                .frame(width: 74, alignment: .leading)
+            Menu {
+                ForEach(SceneParallaxMode.allCases) { mode in
+                    Button(mode.title) {
+                        update(layer) { $0.material.parallaxMode = mode }
+                    }
+                }
+            } label: {
+                menuLabel(layer.material.parallaxMode.title,
+                          muted: layer.material.parallaxMode == .off)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// What the march will actually read, if anything.
+    ///
+    /// THREE ANSWERS AND NOT TWO, which is why this returns a description
+    /// rather than a Bool. A layer can have its own height map, or fall back to
+    /// the normal map's alpha, or have neither — and the row has to say which,
+    /// because "no relief appeared" has a different fix in each case.
+    private enum HeightSource {
+        case map(String)
+        case normalAlpha
+        case missingFile
+    }
+
+    private func heightSource(_ layer: SceneLayer) -> HeightSource? {
+        if let id = layer.material.heightMapAssetID {
+            // A NAMED-BUT-MISSING MAP SAYS SO, the same as the normal map row:
+            // falling back to the alpha here would tell the artist their pick
+            // never took, and they would pick it again and watch nothing
+            // happen, because the file is what moved.
+            guard let asset = assetManager.asset(for: id) else { return .missingFile }
+            return .map(asset.name)
+        }
+        // The fallback is only real when there is a normal map to read it from.
+        guard let normalID = layer.material.normalMapAssetID,
+              assetManager.asset(for: normalID) != nil else { return nil }
+        return .normalAlpha
+    }
+
+    private func heightMapName(_ layer: SceneLayer) -> String {
+        guard let source = heightSource(layer) else { return "None" }
+        switch source {
+        case let .map(name): return name
+        case .normalAlpha:   return "From normal alpha"
+        case .missingFile:   return "Missing file"
+        }
+    }
+
+    /// One line saying what the chosen mode does to the outline.
+    ///
+    /// The three modes differ in exactly one respect and it is not visible in
+    /// the menu: whether the card's rectangle is still the outline, and whether
+    /// the relief may paint outside it.
+    private func parallaxHint(_ layer: SceneLayer) -> String {
+        switch layer.material.parallaxMode {
+        case .off:
+            return ""
+        case .occlusion:
+            return "The relief parallaxes against the card, but the card's "
+                 + "rectangle is still the outline."
+        case .silhouetteClip:
+            return "The outline follows the relief, biting inwards. The card "
+                 + "keeps its size."
+        case .silhouetteShell:
+            return "The card is drawn larger by Depth so the relief can stand "
+                 + "proud of its edge. Selection, framing and shadows still use "
+                 + "the card's real size."
+        }
+    }
+
+    /// The pill every picker menu wears, so the three cannot drift apart.
+    ///
+    /// The swatch goes INSIDE the pill, not beside it: a map picker reads as
+    /// one control, and a thumbnail floating outside the rounded rect looks
+    /// like a separate button an artist will try to click.
+    private func menuLabel(_ text: String, muted: Bool,
+                           thumbnailID: UUID? = nil,
+                           showsThumbnail: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            if showsThumbnail { thumbnail(thumbnailID) }
+            Text(text)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(muted ? UM.textMuted : UM.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(UM.surfaceInset)
+        )
     }
 
     /// The eight channels, as toggles. Unlike a light's mask this one MAY be
@@ -306,44 +495,71 @@ struct SceneInspectorView: View {
     }
 
     private func normalMapRow(_ layer: SceneLayer) -> some View {
+        mapPickerRow(
+            label: "Normal Map",
+            selected: layer.material.normalMapAssetID,
+            display: normalMapName(layer),
+            // ONLY THE MAPS. Offering artwork here would let an artist pick a
+            // drawing as a normal map, which decodes every pixel of it as a
+            // direction and lights the card by its colours.
+            options: assetManager.normalMapAssets,
+            emptyHint: "Import a file named …_n.png"
+        ) { next in
+            update(layer) { $0.material.normalMapAssetID = next }
+        }
+    }
+
+    private func heightMapRow(_ layer: SceneLayer) -> some View {
+        mapPickerRow(
+            label: "Height Map",
+            selected: layer.material.heightMapAssetID,
+            display: heightMapName(layer),
+            // ONLY THE HEIGHT FIELDS, for the sharper version of the same
+            // reason: the march reads a picked drawing's BRIGHTNESS as depth,
+            // so every dark region of it becomes a hole.
+            options: assetManager.heightMapAssets,
+            emptyHint: "Import a file named …_h.png"
+        ) { next in
+            update(layer) { $0.material.heightMapAssetID = next }
+        }
+    }
+
+    /// The one row both map pickers are.
+    ///
+    /// WRITTEN ONCE, because the two differ in four strings and in nothing
+    /// else that matters -- and the parts that do matter are the parts a second
+    /// copy gets wrong quietly: that "None" clears the id rather than leaving
+    /// it, that the list offers ONLY assets of the right role, and that the
+    /// label reads what the RENDERER will do rather than what the id says.
+    ///
+    /// `display` is passed in rather than derived here, because the two rows
+    /// answer "nothing picked" differently: a normal map has no fallback and
+    /// reads "None", while a height map can fall through to the normal map's
+    /// alpha and reads "From normal alpha".
+    private func mapPickerRow(label: String,
+                              selected: UUID?,
+                              display: String,
+                              options: [TextureAsset],
+                              emptyHint: String,
+                              set: @escaping (UUID?) -> Void) -> some View {
         HStack(spacing: 8) {
-            Text("Normal Map")
+            Text(label)
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(UM.textSecondary)
                 .frame(width: 74, alignment: .leading)
             Menu {
-                Button("None") {
-                    update(layer) { $0.material.normalMapAssetID = nil }
-                }
-                // ONLY THE MAPS. Offering artwork here would let an artist pick
-                // a drawing as a normal map, which decodes every pixel of it as
-                // a direction and lights the card by its colours.
-                let maps = assetManager.normalMapAssets
-                if maps.isEmpty {
-                    Text("Import a file named …_n.png")
+                Button("None") { set(nil) }
+                if options.isEmpty {
+                    Text(emptyHint)
                 } else {
                     Divider()
-                    ForEach(maps) { asset in
-                        Button(asset.name) {
-                            update(layer) { $0.material.normalMapAssetID = asset.id }
-                        }
+                    ForEach(options) { asset in
+                        Button(asset.name) { set(asset.id) }
                     }
                 }
             } label: {
-                HStack(spacing: 6) {
-                    thumbnail(layer.material.normalMapAssetID)
-                    Text(normalMapName(layer))
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(hasNormalMap(layer) ? UM.textPrimary : UM.textMuted)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(UM.surfaceInset)
-                )
+                menuLabel(display, muted: selected == nil,
+                          thumbnailID: selected, showsThumbnail: true)
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
