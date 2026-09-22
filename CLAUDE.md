@@ -46,7 +46,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-37 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+38 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -106,7 +106,7 @@ errores reales.
 | 1 | Math + modelo de datos | ✅ Completa salvo 3 conveniencias de editor |
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
-| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 5 de ~9 piezas** |
+| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 6 de ~9 piezas** |
 | 5 | Scene compositing, luces, física secundaria, export | ⬜ No empezada |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
@@ -161,7 +161,10 @@ textura **cargada**, y no hay pipeline de decodificación de imágenes.
   los dos subsistemas está modelado en `EditorScene`.
 - `solveRigPose` / `rigPose(atFrame:)` de `SceneAnimator` — Fase 5.
 
-**Deuda marcada, no empezada** (Riesgo #6 del ROADMAP):
+**Deuda marcada, primera mordida hecha** (Riesgo #6 del ROADMAP):
+`ringFrame` y las constantes de geometría que el mesh builder del gizmo
+necesita ya están extraídas a `Render/SceneGizmoLayout.h` (Fase 4, pieza
+5). Lo demás sigue dentro de las vistas:
 `SceneGizmoOverlay.swift` (1732 L) y `TimelineView.swift` (4326 L) tienen
 matemática real de hit-testing y curvas **dentro de cuerpos de vista
 SwiftUI**. Hay que extraerla a UMeshCore *antes* de que la UI de Windows
@@ -296,11 +299,45 @@ cuenta (`truncatedVertices`) en vez de tragárselo.
 Scoping: el init Swift toma un `Mesh` entero y lee un solo campo, así que
 aquí se recibe ese campo — Render no depende de Mesh.
 
+**`Render/SceneGizmoTypes.h` + `SceneGizmoLayout.h` + `SceneGizmoMeshBuilder.h/.cpp`**
+← `SceneGPU/SceneGizmoTypes.swift` (38) + `SceneGizmoLayout.swift` (135) +
+`SceneGizmoMeshBuilder.swift` (478). 12 tests.
+
+La descripción CPU de la forma del gizmo y su conversión a triángulos:
+conos y cilindros para las flechas, toros tubulares para los anillos, quads
+translúcidos para los handles de plano, y el diagrama propio de una luz.
+Todo en **espacio de mundo**; el vertex shader hace el recentrado y el
+deslizamiento por `screenOffsetNDC`.
+
+**Sin recorte de near-plane aquí**, a diferencia de `ringArcs` del overlay:
+ese recorta a mano porque un stroke de `Canvas` es una polilínea sin
+noción de clip space. Un triángulo entregado a la GPU no tiene ese
+problema — el rasterizador recorta contra el frustum, exacto y gratis.
+(Contrasta con `clipAndProject`, que **sí** recorta: alimenta picking en
+CPU y el export, donde no hay rasterizador.)
+
+**Primera mordida del Riesgo #6**: `ringFrame`, la colocación del quad de
+plano, la escala del view ring y el `awayAlpha` salen de
+`SceneGizmoOverlay.swift` (1732 L de SwiftUI) al core, que es exactamente
+el orden que este archivo pide — extraer *antes* de que Windows necesite el
+equivalente. Lo que construye un layout (`gizmoState`, `handleSet`,
+`gizmoScale`, la matemática de arrastre) sigue allí: necesita el modelo de
+Fase 5.
+
+Diferido: `SceneGizmoTarget` y el payload del handle de luz (tipos de Fase
+5). El builder nunca los lee — los handles de una luz le llegan como
+posiciones — así que `kLight` es un caso único cuyo único trabajo es
+**ordenar** el buffer.
+
+El orden de emisión es contrato: diagrama de luz primero y debajo, luego
+planos, ejes y anillos. El test lo afirma como propiedad de **prefijo**
+(añadir una capa encima nunca mueve lo de abajo) y comprueba que barajar el
+layout no cambia un solo vértice.
+
 ### Pendiente, en orden de dependencia
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 5 | Layout + mallas de gizmo | `SceneGizmoLayout.swift` (135) + `SceneGizmoMeshBuilder.swift` (478) | 613 | Depende de `worldLengthForPixels` (ya portado). |
 | 6 | Geometría auxiliar | `ArcGeometryBuilder.swift` (152) + `SphereGeometryBuilder.swift` (140) | 292 | |
 | 7 | Matemática de luces | `Render/SceneLighting.swift` | 544 | Solapa con Fase 5: portar la *matemática*, no el modelo `SceneLight`. |
 | 8 | Presupuesto de frame | `Render/SceneRenderBudget.swift` | 174 | |

@@ -1191,9 +1191,68 @@ Special-case validation needs, carried over into each phase's own tests:
    missing its inverse-bind taking no slot rather than shifting every later
    one. All 37 test binaries pass.
 
-   **Not yet started**: gizmo layout and mesh building, the auxiliary
-   geometry builders, lighting math, the frame budget, the reference shader
-   math, and the Metal/DirectX backends themselves.
+   `Render/SceneGizmoTypes.h`, `Render/SceneGizmoLayout.h` and
+   `Render/SceneGizmoMeshBuilder.h/.cpp` port the gizmo trio
+   (`SceneGPU/SceneGizmoTypes.swift`, `SceneGizmoLayout.swift`,
+   `SceneGizmoMeshBuilder.swift`): the CPU-only description of the
+   manipulator's shape, and its conversion into triangles -- cones and
+   cylinders for the move/scale/shear arrows, tube-shaded tori for the
+   rotate rings, translucent double-sided quads for the plane handles, and
+   a light's own diagram. Everything in WORLD space; the vertex shader does
+   the recentre-then-slide itself.
+
+   No near-plane cutting here, deliberately, and the contrast with
+   `SceneProjection::clipAndProject` is the point. The overlay's `ringArcs`
+   hand-rolls a cut because a SwiftUI `Canvas` stroke is a polyline with no
+   notion of clip-space clipping; a triangle handed to the GPU has no such
+   problem, because the rasteriser clips every primitive against the
+   frustum exactly and for free. `clipAndProject` still cuts because it
+   feeds CPU picking and the export path, where there is no rasteriser.
+
+   This is also the FIRST BITE of Risk #6. `ringFrame`, the plane-quad
+   placement (`planeOffset`/`planeSize`), the view ring's scale and the
+   away-facing alpha come out of `SceneGizmoOverlay.swift` -- 1732 lines of
+   real math inside SwiftUI view bodies -- and into the core, which is the
+   order this repository committed to: extract on the Mac BEFORE the
+   Windows UI needs an equivalent, rather than porting later straight out
+   of a view body. What BUILDS a layout (`gizmoState`, `handleSet`,
+   `gizmoScale`, the drag math) stays there for now: it needs the Phase 5
+   model.
+
+   Deferred with reasons: `SceneGizmoTarget` and the light handle's
+   payload, both Phase 5 types the builder never reads -- a light's handles
+   reach it as positions, and the handle id's only job is to ORDER the
+   buffer, so `kLight` is one flat case. Where Swift keys these geometries
+   in a `Dictionary` and sorts on the way out (its order is seeded per
+   process), the C++ layout carries vectors and the builder sorts by the
+   same fixed key: same guarantee, and two platforms emitting the same
+   buffer is the stronger version of the argument.
+
+   Tested: `tests/SceneGizmoMeshTests.cpp` (12 tests). A mesh builder is
+   easy to test badly -- re-deriving a vertex position restates the loop
+   that produced it -- so these assert the documented properties: an arrow
+   is EXACTLY `scale` long (that length is what `worldLengthForPixels`
+   sized to hold a constant pixel size, so a head that overshoots makes the
+   gizmo grow as the camera turns), a highlighted handle reads thicker
+   rather than merely brighter and without getting longer, an away-facing
+   axis dims rather than disappearing, the emit order is fixed whatever
+   order the layout was filled in, the layers come out in draw order as a
+   PREFIX property (adding a layer never disturbs what is below), the plane
+   quad is double-sided and sits between its offset and its size, the view
+   ring is outside the world rings and billboarded to the camera's forward,
+   every primitive is a whole number of triangles with unit normals, a
+   torus's points lie in its own tube, and degenerate input emits nothing
+   rather than NaN vertices. Two of those tests started as wrong
+   expectations of mine and were corrected to what the Swift actually does:
+   a zero-scale gizmo does NOT come out empty (the plane quad's corners are
+   offsets, not radii, so it has no guard on either side of the port and
+   collapses onto the origin), and a light's influence ring keeps the
+   ARTIST'S radius, unscaled by the gizmo's screen-constant scale -- only
+   its tube's girth comes from that. All 38 test binaries pass.
+
+   **Not yet started**: the auxiliary geometry builders, lighting math, the
+   frame budget, the reference shader math, and the Metal/DirectX backends
+   themselves.
 5. **Scene compositing / lighting / physics secondary motion / export** —
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)
