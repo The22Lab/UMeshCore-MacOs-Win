@@ -123,7 +123,13 @@ struct FrameRegion {
     // A non-finite coordinate falls back to the WHOLE frame rather than to
     // nothing: NaN reaching here means a degenerate projection, and
     // redrawing the frame is the conservative answer, consistent with the
-    // culler's one-directional error rule.
+    // culler's one-directional error rule. The test is per point, and
+    // covers `pad` as well -- NOT the reduced box, which would be
+    // order-dependent (see the .cpp: `std::min(finite, NaN)` keeps the
+    // finite operand, so a NaN anywhere but first is swallowed and the
+    // layer silently skipped). Swift is exposed to the same thing through
+    // fmin-based `simd_min`; this port answers the same way wherever the
+    // NaN sits.
     static FrameRegion bounding(
         const std::vector<Vec2>& points, float pad, int frameWidth, int frameHeight);
 

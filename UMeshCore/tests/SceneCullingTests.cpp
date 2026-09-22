@@ -189,6 +189,37 @@ static void testFrameRegionDegeneracies() {
     UM_CHECK(FrameRegion::bounding({Vec2(-100, -100), Vec2(-50, -50)}, 0.0f, 1000, 800).isEmpty());
 }
 
+static void testNonFiniteAnswerDoesNotDependOnWhereTheNaNSits() {
+    // The reduce-first form answered these two differently -- whole frame
+    // when the NaN came first, an EMPTY region (the layer skipped, which
+    // is the error direction this file forbids) when it came second,
+    // because `std::min(finite, NaN)` keeps the finite operand and the
+    // guard never saw it. Same unknown, same answer, wherever it sits.
+    const float nan = std::nanf("");
+    const FrameRegion first =
+        FrameRegion::bounding({Vec2(nan, 20.0f), Vec2(10, 10)}, 0.0f, 1000, 800);
+    const FrameRegion second =
+        FrameRegion::bounding({Vec2(10, 10), Vec2(nan, 20.0f)}, 0.0f, 1000, 800);
+    UM_CHECK(first == FrameRegion::whole(1000, 800));
+    UM_CHECK(second == FrameRegion::whole(1000, 800));
+    // Same for a NaN in the last of several, and for an infinity.
+    UM_CHECK(FrameRegion::bounding({Vec2(10, 10), Vec2(20, 20), Vec2(30.0f, nan)}, 0.0f, 1000,
+                                   800) == FrameRegion::whole(1000, 800));
+    UM_CHECK(FrameRegion::bounding({Vec2(10, 10), Vec2(-INFINITY, 20.0f)}, 0.0f, 1000, 800) ==
+             FrameRegion::whole(1000, 800));
+}
+
+static void testNonFinitePadIsAnUnknownLikeAnyOther() {
+    // `pad` is added to all four edges, so a non-finite one makes the box
+    // exactly as meaningless as a non-finite corner. Before it was
+    // guarded it reached the int conversion and came back INT_MIN.
+    const FrameRegion r =
+        FrameRegion::bounding({Vec2(10, 10), Vec2(20, 20)}, std::nanf(""), 1000, 800);
+    UM_CHECK(r == FrameRegion::whole(1000, 800));
+    UM_CHECK(FrameRegion::bounding({Vec2(10, 10), Vec2(20, 20)}, INFINITY, 1000, 800) ==
+             FrameRegion::whole(1000, 800));
+}
+
 UM_TEST_MAIN_BEGIN()
     testAPointOnScreenIsNeverCulled();
     testSomethingWellOutsideIsActuallyCulled();
@@ -200,4 +231,6 @@ UM_TEST_MAIN_BEGIN()
     testStraddlingHullIsKept();
     testFrameRegionRoundsOutwardAndClipsToTheFrame();
     testFrameRegionDegeneracies();
+    testNonFiniteAnswerDoesNotDependOnWhereTheNaNSits();
+    testNonFinitePadIsAnUnknownLikeAnyOther();
 UM_TEST_MAIN_END()

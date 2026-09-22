@@ -1089,7 +1089,23 @@ Special-case validation needs, carried over into each phase's own tests:
    and inventing a layer type now would mean re-transcribing that lift --
    the failure the file itself warns about.
 
-   Tested: `tests/SceneCullingTests.cpp` (10 tests) and
+   **Follow-up fix (same file, landed after Phase 4 closed).**
+   `FrameRegion::bounding` tested for non-finite coordinates on the
+   REDUCED box, which made the answer depend on where the NaN sat and got
+   it wrong in the forbidden direction. `std::min(finite, NaN)` returns
+   the finite operand, so a NaN point anywhere but first was swallowed by
+   the reduction and never reached the guard. Measured: the points
+   `{(10,10), (NaN,20)}` gave `(10,10)-(10,20)` -- an EMPTY region, i.e.
+   the layer skipped altogether -- while the same two in the other order
+   gave the whole frame. A non-finite `pad`, which lands on all four
+   edges, was not guarded at all and reached the int conversion, coming
+   back `INT_MIN`. The test is now per point and covers `pad`, so every
+   unknown gets the one conservative answer the header promises. Swift is
+   exposed to the identical thing through fmin-based `simd_min`; this is
+   a documented divergence in the safe direction, not a transcription
+   slip. Two regression tests pin it (12 tests in the file now).
+
+   Tested: `tests/SceneCullingTests.cpp` (10 tests originally) and
    `tests/SceneViewCameraTests.cpp` (9 tests). The culling tests check the
    asymmetric rule against `SceneProjection` itself over 4000 random
    cameras and points -- anything the projection would actually draw is
