@@ -46,7 +46,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-35 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+37 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -106,7 +106,7 @@ errores reales.
 | 1 | Math + modelo de datos | ✅ Completa salvo 3 conveniencias de editor |
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
-| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 3 de ~9 piezas** |
+| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 5 de ~9 piezas** |
 | 5 | Scene compositing, luces, física secundaria, export | ⬜ No empezada |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
@@ -247,12 +247,59 @@ No portado: `cardCorners`/`cardPoint` — toman un `SceneLayer` y llaman a su
 `liftToWorld`; eso es Fase 5, e inventar el tipo ahora obligaría a
 re-transcribir ese lift, el fallo que el propio archivo advierte.
 
+**`Render/SceneGPUTypes.h`** ← `Render/SceneGPU/SceneGPUTypes.swift` (278 L).
+Los structs POD que lee el shader, byte a byte. 8 tests.
+
+Son un **formato de cable**, no tipos normales: los mismos bytes se
+declaran en Swift, en MSL y — con el backend DirectX — en HLSL. El header
+Swift nombra el fallo: el drift "produce una imagen donde una luz está bien
+y la siguiente lee el radio de su vecina".
+
+El padding está deletreado porque Metal alinea `float3` a 16 bytes, y C++
+es el raro aquí (`Vec3` son 12 bytes con alineación 4). Por eso cada struct
+es `alignas(16)` y cada hueco es un campo `pad` con nombre.
+
+**El harness que falta, sustituido**: `verify_scene_gpu_transcription.py`
+no existe, así que la comprobación se metió **en el código** —
+`static_assert` sobre tamaño, alineación y offset de cada campo, contra los
+números derivados a mano del `.metal`. Un compilador que dispusiera esto de
+otra forma no compila la librería. Los tests de runtime cubren lo que un
+`sizeof` no ve: que un campo escrito por nombre cae en la **palabra** que
+el shader lee.
+
+No portado: `init(_ prepared:falloffRow:)` — transcribe un
+`SceneLighting.PreparedLight` (pieza 7) de un `SceneLight` (Fase 5) y no
+deriva nada. Sí están los **códigos** de `kind`/`blend` como enums: son el
+contrato de cable. Lo que no debe hacerse nunca es mapear el enum del
+modelo por cast — Swift usa un `switch` explícito porque los enums son
+`String`-backed para el formato de archivo, y un raw value haría que el
+orden de declaración cambiara en silencio cada escena guardada.
+
+**`Render/SceneSkinPalette.h/.cpp`** ←
+`Render/SceneGPU/SceneSkinPalette.swift` (170 L). 7 tests.
+
+El fold: `N = rigToWorld · spriteToRig · A · (world · inverseBind) · B`,
+una matriz por sprite y hueso. Treinta matrices en vez de 8320.
+
+**La condición es el tipo entero**: el fold solo es exacto si los pesos
+suman uno — meter un afín dentro de una suma ponderada añade su traslación
+una vez por influencia en vez de una. El test central lo reproduce en vez
+de describirlo: con los pesos crudos el vértice se va decenas de unidades,
+y el delator está en la coordenada homogénea (la `w` de la suma **es** el
+total de pesos).
+
+Slot 0 es la identidad (`A·B`), escrito como el producto y no como
+`Mat4::identity()`, para que un bind no exactamente invertible degrade como
+degradan sus vértices. Se capa **antes** de normalizar, y el recorte se
+cuenta (`truncatedVertices`) en vez de tragárselo.
+
+Scoping: el init Swift toma un `Mesh` entero y lee un solo campo, así que
+aquí se recibe ese campo — Render no depende de Mesh.
+
 ### Pendiente, en orden de dependencia
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 3 | Structs POD de GPU | `Render/SceneGPU/SceneGPUTypes.swift` | 278 | **Leer primero su cabecera**: el padding está deletreado a mano porque Metal alinea `float3` a 16 bytes. El drift produce una luz leyendo el radio de su vecina. |
-| 4 | Paleta de skinning | `Render/SceneGPU/SceneSkinPalette.swift` | 170 | |
 | 5 | Layout + mallas de gizmo | `SceneGizmoLayout.swift` (135) + `SceneGizmoMeshBuilder.swift` (478) | 613 | Depende de `worldLengthForPixels` (ya portado). |
 | 6 | Geometría auxiliar | `ArcGeometryBuilder.swift` (152) + `SphereGeometryBuilder.swift` (140) | 292 | |
 | 7 | Matemática de luces | `Render/SceneLighting.swift` | 544 | Solapa con Fase 5: portar la *matemática*, no el modelo `SceneLight`. |

@@ -1112,10 +1112,88 @@ Special-case validation needs, carried over into each phase's own tests:
    exist in this repository (see CLAUDE.md). The properties those numbers
    measured are what the tests pin instead.
 
-   **Not yet started**: the POD vertex/uniform structs
-   (`SceneGPU/SceneGPUTypes.swift`), the skin palette, gizmo mesh building,
-   auxiliary geometry builders, lighting math, the frame budget, the
-   reference shader math, and the Metal/DirectX backends themselves.
+   `Render/SceneGPUTypes.h` ports `Render/SceneGPU/SceneGPUTypes.swift`:
+   the POD structs the scene shader reads. These are a WIRE FORMAT, not
+   ordinary data types -- the same bytes are declared in Swift, in MSL, and
+   will be declared again in HLSL for the DirectX backend, and nothing but
+   the layout keeps them in step. The Swift header states the failure
+   exactly: drift "produces a picture where one light is right and the next
+   is reading a neighbour's radius", which is not a crash and not obviously
+   wrong on screen. The padding is spelled out because Metal aligns
+   `float3` to 16 bytes and so does `SIMD3<Float>`; C++ is the odd one out,
+   with a 12-byte 4-aligned `Vec3`, so every struct is `alignas(16)` and
+   every hole is a named `pad` field.
+
+   The harness the Swift files lean on
+   (`Editor/verify_scene_gpu_transcription.py`, which compares the
+   declarations field by field and checks every size is a multiple of 16)
+   does not exist here, so the check moved INTO the code: `static_assert`s
+   on size, alignment and the offset of every field, against numbers
+   derived by hand from the MSL declarations. A compiler that would lay
+   these out differently does not compile the library -- strictly stronger
+   than a script nobody runs. The runtime tests cover what a `sizeof`
+   cannot see: that a field written by name lands on the WORD the shader
+   indexes.
+
+   Not ported: `SceneLightUniform.init(_ prepared:falloffRow:)`, which
+   transcribes a `SceneLighting.PreparedLight` (Phase 4 piece 7) off a
+   `SceneLight` (Phase 5) and derives nothing itself. The `kind`/`blend`
+   CODES are here as enums, because the values are the wire contract; what
+   is deliberately absent is the mapping from the model's enums. Swift
+   writes that as an explicit `switch` rather than giving those enums an
+   Int raw value, because they are `String`-backed for the file format and
+   a raw value would make the wire format depend on Swift declaration
+   order -- reordering the cases would silently change every saved scene.
+   The same rule binds the C++ model when Phase 5 lands it: map with a
+   switch, never a cast.
+
+   `Render/SceneSkinPalette.h/.cpp` ports
+   `Render/SceneGPU/SceneSkinPalette.swift`: a rig instance's bones folded
+   into `N = rigToWorld * spriteToRig * A * (world * inverseBind) * B`, one
+   matrix per sprite per bone, so the shader is the textbook four-weight
+   sum -- thirty matrices instead of 8320, with the per-vertex work moved
+   to hardware built for it.
+
+   The fold is exact ONLY if the weights sum to one, and that condition is
+   the whole of the type: pushing an affine inside a weighted sum adds its
+   translation once per influence instead of once. The data does not
+   guarantee it (the weight brush normalises, auto-weighting caps at four
+   without renormalising, and `skinnedVertices` divides by the total
+   defensively, so nothing upstream complains), which is why `influences`
+   normalises on the way to the GPU and nothing else may skip it. Slot zero
+   is the identity `A * B`, written as the product rather than as a literal
+   identity so a sprite whose bind pose is not exactly invertible degrades
+   the way its bound vertices do; an unweighted vertex rides it as one
+   influence of weight 1, which is how the CPU's per-vertex branch
+   disappears without changing the answer. Influences are capped BEFORE
+   normalising -- the surviving four are renormalised between themselves,
+   where normalising first and dropping the tail would leave the vertex
+   short of its weight and slump it towards its bind position -- and the
+   truncation is counted and reported rather than swallowed. Scoping: the
+   Swift initializer takes a whole `Mesh` and reads one field of it, so the
+   C++ one takes that field and Render stays independent of Mesh.
+
+   Tested: `tests/SceneGPUTypesTests.cpp` (8 tests) and
+   `tests/SceneSkinPaletteTests.cpp` (7 tests). The GPU-types tests write a
+   distinct value into every field and read each struct back as the flat
+   run of words the GPU indexes, plus the material flags being distinct
+   single bits and the wire codes asserted as literals (a test that read
+   them off the enum would agree with any reordering). The palette tests
+   put the shader-side sum over the folded palette against a CPU-side
+   "blend, then apply the sprite and layer affines" and require them to
+   agree once normalised -- and reproduce the displacement with the raw
+   weights rather than describing it, with the tell in the homogeneous
+   coordinate, since the weighted sum's w IS the weight total. Also: slot
+   zero resolving to the bind position rather than the origin or the first
+   bone, a fifth influence being capped, counted and renormalised
+   afterwards, tied weights breaking by slot so two runs of the same
+   project agree (the slots are baked into an uploaded buffer), and a bone
+   missing its inverse-bind taking no slot rather than shifting every later
+   one. All 37 test binaries pass.
+
+   **Not yet started**: gizmo layout and mesh building, the auxiliary
+   geometry builders, lighting math, the frame budget, the reference shader
+   math, and the Metal/DirectX backends themselves.
 5. **Scene compositing / lighting / physics secondary motion / export** —
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)
