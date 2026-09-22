@@ -923,16 +923,54 @@ C ABI sobre todo:
 Detalle completo, con el porqué de cada decisión, en
 `bindings/swift/README.md`.
 
+### Rebanada 0 de 6a — hecha: el proyecto Xcode ya está cableado
+
+**No lo rehagas.** `UltraMesh.xcodeproj/project.pbxproj` ya tiene las
+cuatro cosas que hacían falta, y antes no tenía ninguna:
+
+- `UMeshCore/src` como `PBXFileSystemSynchronizedRootGroup` del target de
+  app — el mismo mecanismo que el proyecto ya usa para sus fuentes Swift.
+  Xcode compila los ~53 TUs de C++ él mismo, para macOS **y** iPad. Se
+  eligió sobre enlazar un `.a` de CMake para no gestionar archivos por
+  slice ni meter un paso de build externo; CMake se queda para los tests
+  del core.
+- Un exception set que deja `CMakeLists.txt` fuera del bundle.
+- `HEADER_SEARCH_PATHS` y `SWIFT_INCLUDE_PATHS` a `UMeshCore/include`.
+- `SWIFT_OBJC_INTEROP_MODE = objcxx`.
+
+Los cuatro van en los dos bloques de **proyecto**, no del target, para que
+el bundle de tests los herede.
+
+`UltraMesh 2d animationTests/UMeshCoreInteropSmokeTests.swift` es la
+verificación, con cuatro tests graduados para que un fallo se localice
+solo: constante de header vs. símbolo de `.cpp` (separa "headers visibles"
+de "fuentes compiladas y enlazadas"), `Vec2` cruzando con sus campos, un
+tipo con métodos (`SceneLightMask`), y un algoritmo real
+(`ScenePlayback`).
+
 ### Pendiente
 
-Las fachadas **no** están escritas, a propósito: el orden razonable es
-escribirlas *cuando una vista concreta del Mac las pida*. Una fachada
-especulativa es una segunda API que mantener, y la migración de 6a es
-progresiva por decisión explícita del usuario.
+**Lo siguiente es que alguien con un Mac compile y ejecute esos cuatro
+tests.** Hasta que eso esté confirmado, todo lo demás de 6a se escribiría
+sobre una suposición: en este entorno Linux no hay `swift`, `swiftc` ni
+`xcodebuild`, así que **todo el Swift de esta migración llega compilado
+cero veces**.
 
-Lo demás de Fase 6 sigue sin empezar (rewire de las vistas del Mac,
-andamiaje del shell WinUI 3 + DirectX), y ninguno de los dos se puede
-compilar ni verificar en este entorno Linux.
+El plan completo por rebanadas (1 puente de tipos → 2 esqueleto → 3
+animación → 4 mesh → 5 serialización → 6 Scene) y el porqué de su forma
+está en el mensaje del commit de la rebanada 0 y en el plan de la sesión.
+La forma corta, que es lo que hay que no olvidar: **las vistas no pueden
+hablar con objetos C++ opacos** —sostienen copias de structs Swift,
+SwiftUI diffea por `Equatable`, y hay `Binding` encadenando sobre campos
+almacenados (`InspectorPanelView.swift:1247`)—, así que **UMeshCore se
+queda los algoritmos y los structs Swift se quedan como espejo de datos,
+convertidos en la frontera**.
+
+Las fachadas de interop **no** están escritas, a propósito: el orden
+razonable es escribirlas *cuando una vista concreta las pida*. Una fachada
+especulativa es una segunda API que mantener.
+
+Sin empezar: el shell WinUI 3 + DirectX (6b).
 
 ---
 
