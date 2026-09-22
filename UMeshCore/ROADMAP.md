@@ -982,6 +982,75 @@ Special-case validation needs, carried over into each phase's own tests:
    should be built). Shader math (checkerboard LOD blend, sprite transform
    decomposition) authored once in C++ as reference, hand-transcribed to
    MSL and HLSL with a numeric cross-check harness.
+   *Status: started.* `Render/SceneProjection.h/.cpp` ports
+   `Render/SceneProjection.swift` -- the ONE way a scene turns world
+   coordinates into pixels (view matrix, perspective projection, divide by
+   w). Chosen as Phase 4's first piece because the whole phase hangs on it,
+   and because the Swift source's own header records why it must be shared:
+   the rig side already had THREE copies of world-to-screen
+   (`MetalRenderer.project3DToScreen`, `ToolUtilities.project3DToScreen`,
+   and an inline expression in the exporter) and they already DISAGREED --
+   the exporter had no `rotation3D` term, so a sprite rotated in 3D
+   exported differently from how it looked on the canvas. A Metal backend
+   and a DirectX backend each re-deriving this would reproduce exactly that
+   class of bug, which is what ROADMAP's Phase 2 note already committed
+   against ("picking and rendering must share one skinning/projection
+   implementation, never two").
+
+   Ported whole, including the parts that exist because of specific
+   reported bugs, each documented in place:
+   - `clipAndProject` cuts a polygon to the near AND far planes rather than
+     rejecting it. The all-or-nothing rule it replaces asked `project` per
+     corner and dropped the whole primitive when one came back nil --
+     false, because a quad with one corner behind the eye is PARTLY visible
+     and the visible part is a polygon. Since the nearest corner crosses
+     long before the centre does, and the gizmo projects the centre, the
+     card vanished while its handles stayed. The cut happens in CLIP space,
+     before the divide, so a cut vertex has `clip.z == 0` (near) or
+     `clip.z == clip.w` (far) BY CONSTRUCTION and cannot land a hair on the
+     wrong side of the guard it was made to satisfy.
+   - The far plane clips too, and is not decoration: `farZ` went into the
+     projection matrix and then nothing read it back, so the culler
+     discarded cards the renderer would happily have drawn.
+   - `projectiveQuad` deliberately KEEPS corners behind the eye. Such a
+     corner divides by a negative w and lands at the antipode, which is its
+     correct projective image, not an error to guard away -- that is what
+     lets the visible part be drawn with real perspective rather than
+     approximated.
+   - `rayThrough`/`hitPlane`/`axisParameter` answer gizmo drags in WORLD
+     space. The screen-delta-over-pixels-per-unit approach they replace is
+     only right when the projection is affine; the Swift harness measured
+     the handle sliding up to 313 px out from under the pointer.
+   - `worldLengthForPixels` is ONE scale for all three axes, because the
+     projection is uniform -- measuring per axis is what gave one gizmo
+     three different arrows.
+
+   Takes camera parameters directly rather than a `SceneCamera`, which
+   belongs to Phase 5 and is not ported; `fromFrame` covers what the
+   fly-camera initializer needs, so both Swift convenience initializers
+   become one-liners once those types exist. Same "inject what's needed"
+   scoping used throughout this port.
+
+   Tested: `tests/SceneProjectionTests.cpp` (20 tests), asserting the
+   PROPERTIES the Swift file documents rather than re-deriving matrix
+   entries (which would only restate the implementation): the +Z look
+   convention and y-down screen space, project/unproject being exact
+   inverses at three depths and under a yawed+pitched camera, perspective
+   convergence, a tilted card having a near edge wider than its far edge
+   (the first failure the Swift header names), a partly-visible quad
+   yielding a polygon where the all-or-nothing rule would draw nothing, a
+   wholly-visible quad passing through unchanged with attributes intact,
+   far-plane clipping, `projectiveQuad` answering for corners `project`
+   refuses, a gizmo scale spanning the same pixels along X and Y, axis
+   tracking in world units with the end-on case refused, and the
+   angle-built and frame-built cameras projecting identically. All 33 test
+   binaries pass.
+
+   **Not yet started**: frustum culling (`SceneCulling.swift`, whose planes
+   are extracted from the same view-projection matrix the drawing divides
+   by, deliberately, so they cannot drift from it), the POD vertex/uniform
+   structs (`SceneGPU/SceneGPUTypes.swift`), the skin palette, gizmo mesh
+   building, lighting math, and the Metal/DirectX backends themselves.
 5. **Scene compositing / lighting / physics secondary motion / export** —
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)
