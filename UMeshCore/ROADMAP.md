@@ -1795,6 +1795,58 @@ Special-case validation needs, carried over into each phase's own tests:
    is the test that should fail and send the reader to the header. All 46
    test binaries pass.
 
+   `Export/ExportSettings.h/.cpp` ports `Export/ExportSettings.swift`
+   (158 L) and the three string-backed enums it holds (`ExportKind`,
+   `PNGSizeMode`, `PNGExportType`), closing Phase 5.
+
+   It crosses because it is a SHARED FORMAT. The preset the Save button
+   writes exists "so a project's export setup travels with the team", so a
+   Mac build and a Windows build have to agree on it field for field and
+   token for token, or a preset saved on one opens wrong on the other.
+   That is precisely the kind of contract this library exists to hold, and
+   the file is pure data plus three derived values.
+
+   One documented divergence: EVERY FIELD IS OPTIONAL on the way in,
+   defaulting to a fresh `ExportSettings`' value, and an unrecognised enum
+   token keeps the default rather than failing. Swift's `Codable` is
+   stricter and would throw on a missing key -- but a preset travels
+   between machines and between versions of the app, so a build that added
+   a field must still open a preset written before it. Refusing the whole
+   preset over one absent key is the failure this avoids.
+
+   **`Export/ExportManager.swift` (135 L) is NOT ported**, and that is the
+   same call `CLAUDE.md` makes for the ~9000 lines of `Render/` shell. It
+   is orchestration, and nearly all of it is platform: a `PNGFrameSource`
+   backed by a Metal offscreen renderer, a `VideoExporter` on
+   AVFoundation's H.264 writer, `SceneFrameRenderer`/`SceneMetalRenderer`,
+   `URL`s, Swift `async`/`Task`. A Windows build must produce its own
+   against DirectX and Media Foundation, behind a common interface the
+   shell owns.
+
+   Two things in that file are logic rather than wiring, and neither
+   belongs in an export module:
+   - The guard in `exportSkeleton` that refuses to write a flat `.umesh`
+     over a project PACKAGE. Real and load-bearing -- the two share an
+     extension by design, so a save panel's "replace?" prompt looks
+     perfectly reasonable and saying yes destroys the project. This port
+     already has it, as `classifyProjectFile` in
+     `Serialization/ProjectPackage.h`, where the sniffing lives.
+   - The batch loop's per-clip subdirectory naming
+     (`parentDirectory/{clipName}/`): one line of path joining around a
+     platform exporter, which comes across with whichever shell grows a
+     batch export.
+
+   Tested: `tests/ExportSettingsTests.cpp` (16 tests) -- tokens rather
+   than ordinals, a full round trip through TEXT (a preset is a file, not
+   a value tree), a preset from an older build opening on defaults, an
+   unknown enum token keeping the default, a wrong-typed field not
+   poisoning the rest, `restoreDefaults` keeping the folder while resetting
+   the extension to the KIND's default, both size modes including their
+   floors, and sorted keys so a preset living in a repo does not diff on
+   every save. All 47 test binaries pass.
+
+   **Phase 5 is complete.**
+
    Tested: `tests/SceneCompositionTests.cpp` (23 tests) -- draw order and
    its tie-break, depth reordering nothing, front-to-back being exactly
    the reverse (the two ends disagreeing is a bug this project has already

@@ -47,7 +47,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-46 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+47 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -108,7 +108,7 @@ errores reales.
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
 | 4 | Capa de geometría de render compartida | ✅ Completa (1 pieza descartada: código muerto) |
-| **5** | **Scene compositing, luces, física secundaria, export** | **🔨 En curso — el modelo de capa** |
+| **5** | **Scene compositing, luces, física secundaria, export** | **✅ Completa** |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
 
@@ -529,7 +529,7 @@ Si aparecen en otra copia del proyecto, traerlos seguiría siendo valioso.
 
 ---
 
-## Fase 5 — la fase actual
+## Fase 5 — completa
 
 Todo el namespace de Scene compositing, en `Data/Scene/`. Portarlo cierra
 de golpe cinco pendientes: el chunk SCENES, las secciones de manifiesto
@@ -701,11 +701,42 @@ de `BoneTool`: candidatos son los **dos extremos** de cada hueso (el
 segmento entre ellos no es agarrable), gana el más cercano, y el radio es
 un 14 fijo que **no** se escala para táctil.
 
-### Pendiente, en el orden que recomienda `HANDOFF.md`
+**`Export/ExportSettings.h/.cpp`** ← `Export/ExportSettings.swift` (158 L)
++ los tres enums `String`-backed que sostiene. 16 tests.
 
-| # | Portar | Referencia Swift | L | Notas |
-|---|---|---|---|---|
-| 1 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
+Cruza porque **es un formato compartido**: el preset que escribe el botón
+Save existe "para que la configuración de export viaje con el equipo", así
+que el build de Mac y el de Windows tienen que coincidir campo por campo y
+token por token, o un preset guardado en uno se abre mal en el otro.
+
+Divergencia documentada: **todos los campos son opcionales al leer**, con
+el valor de un `ExportSettings` recién construido como defecto, y un token
+de enum desconocido conserva el defecto. El `Codable` de Swift es más
+estricto y lanzaría ante una clave ausente — pero un preset viaja entre
+máquinas y entre versiones de la app, así que rechazarlo entero por una
+clave es justo el fallo que esto evita.
+
+**`ExportManager.swift` (135 L) NO se porta**: es orquestación y casi todo
+es plataforma (`PNGFrameSource` sobre un renderer offscreen de Metal,
+`VideoExporter` sobre el escritor H.264 de AVFoundation,
+`SceneFrameRenderer`, `URL`, `async`/`Task`). Lo único que es lógica y no
+cableado son dos cosas, y ninguna vive ahí:
+
+- La guarda que impide escribir un `.umesh` plano **encima de un paquete
+  de proyecto**. Es real e importa —comparten extensión por diseño, así que
+  el "¿reemplazar?" del panel de guardado parece razonable y decir que sí
+  destruye el proyecto—, y este port ya la tiene como `classifyProjectFile`
+  en `Serialization/ProjectPackage.h`, donde vive el sniffing.
+- El nombrado de subdirectorio por clip del batch
+  (`parentDirectory/{clipName}/`): una línea de join alrededor de un
+  exporter de plataforma.
+
+### Pendiente
+
+Nada de Fase 5. Lo que sigue son las fases 6a/6b y la deuda arrastrada de
+fases anteriores (Fase 1: 3 conveniencias de `Mesh`; Fase 2: todo lo
+bloqueado por el pipeline de alfa, `MeshTool`, y la deuda SwiftUI de
+`SceneGizmoOverlay`/`TimelineView`; Fase 3: base64 de texturas en UMJSON).
 
 ---
 

@@ -28,6 +28,7 @@ add_library(umeshcore STATIC
     Scene/SceneLayer.cpp
     Scene/SceneComposition.cpp
     Scene/ScenePlayback.cpp
+    Export/ExportSettings.cpp
     Mesh/MeshKernel.cpp
     Mesh/MeshValidator.cpp
     Mesh/Mesh.cpp
