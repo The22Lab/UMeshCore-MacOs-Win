@@ -188,6 +188,8 @@ struct SelectedKeyframe {
     Uuid imageID;
     AnimationTrackProperty property;
     Uuid keyframeID;
+
+    bool operator==(const SelectedKeyframe&) const = default;
 };
 
 struct CopiedKeyframePayload {

@@ -230,15 +230,34 @@ Special-case validation needs, carried over into each phase's own tests:
    a slot absent from the map has no attachment track at all, while a slot
    present but mapped to `nullopt` means its track explicitly resolves to
    "show nothing" this frame — two different facts, not one.
-   Remaining in `SceneAnimator`: `commitKeyframe`/`commitMeshDeformKeyframe`
-   and the whole-scene `applyAnimations`/`solveRigPose` orchestrators that
-   tie every piece above together. Then `ToolManager` + the 8 tools on top
-   of all of it — each tool's manipulation math (drag deltas, snap, axis
-   constraint) is independent of this and could in principle be ported
-   sooner, but every tool's `onMouseDown`/`onMouseUp` writes through one of
-   the two `isAnimationEditingEnabled` branches above, so a tool ported
-   without them would be untestable against real behavior, not just
-   incomplete.
+   `resolvedKeyframeValue`/`resolvedAnimatedTranslate`/
+   `resolvedAnimatedRotation` (what a bone/sprite's current value is, in
+   keyframe shape — what the "key" button reads), `commitKeyframe`/
+   `commitMeshDeformKeyframe` (write that as a keyframe at the current frame
+   and re-run the pipeline), and `applyAnimations` itself (the whole-scene
+   per-frame orchestrator tying every piece above together, in the same
+   order the Swift source runs them) are now ported and tested too —
+   **`SceneAnimator` is complete.** `commitKeyframe`/`commitMeshDeformKeyframe`
+   return the keyframe that ended up selected (`SelectedKeyframe`, ported
+   from `Data/Keyframe.swift`) rather than writing into a persistent
+   "what's selected" field, the same representation choice as
+   `applyDrawOrderAnimation`'s. `applyAnimations` solves
+   `skeleton.worldMatrices()` itself, once, internally, right before placing
+   bound sprites — after this same call's constraint/bone-animation passes
+   have already updated the skeleton, so the matrices reflect this frame's
+   pose; it never steps physics (the caller's concern throughout this port),
+   documented alongside `applyBoneBindings`'s identical decision. Only
+   `solveRigPose`/`rigPose(atFrame:)` (point-sampling a rig at an arbitrary
+   frame for a Scene-compositing instance without touching the live scene)
+   remain unported from the animation-evaluation side — Phase 5 scope.
+   `ToolManager` + the 8 tools are next, now unblocked on the SceneAnimator
+   side: each tool's manipulation math (drag deltas, snap, axis constraint)
+   is independent of it, but every tool's `onMouseDown`/`onMouseUp` writes
+   through `commitKeyframe` or straight to the base pose, both of which this
+   file now supports end to end. The other blocker from this section's
+   first paragraph — `CanvasPicking.imageHit`'s alpha-channel hit-testing,
+   needed by `ToolManager`'s selection-click dispatch — is unchanged and
+   still needs Phase 4/5's asset/texture pipeline.
 3. **Serialization** — binary UMSH chunked format (byte-exact; the
    `.meshDeform` empty-payload gap in the current Swift writer needs an
    explicit decision before the reader is written, not a silent port-as-is —

@@ -355,4 +355,180 @@ void applySetupPose(
     applyBoneBindings(images, worldMatrices, time, /*sampleClips=*/false, lastBoundImageRotation);
 }
 
+Vec2 resolvedAnimatedTranslate(const Skeleton& skeleton, const SceneImage& image) {
+    if (!image.boneBinding.has_value()) return image.position;
+    return skeleton.localPoint(image.position, image.boneBinding->boneID);
+}
+
+float resolvedAnimatedRotation(const Skeleton& skeleton, const SceneImage& image) {
+    if (!image.boneBinding.has_value()) return image.rotation;
+    const auto worldRotation = skeleton.worldRotation(image.boneBinding->boneID);
+    return image.rotation - (worldRotation.has_value() ? *worldRotation : 0.0f);
+}
+
+std::optional<KeyframeValue> resolvedKeyframeValue(
+    const Skeleton& skeleton, const std::vector<SceneImage>& images, Uuid targetID,
+    AnimationTrackProperty property) {
+    for (const SceneImage& image : images) {
+        if (image.id != targetID) continue;
+        switch (property) {
+            case AnimationTrackProperty::Translate:
+                return TranslateValue{resolvedAnimatedTranslate(skeleton, image)};
+            case AnimationTrackProperty::Rotate:
+                return RotateValue{resolvedAnimatedRotation(skeleton, image)};
+            case AnimationTrackProperty::Scale:
+                return ScaleValue{image.scale};
+            case AnimationTrackProperty::Shear:
+                return ShearValue{image.skew};
+            default:
+                // Deform keys are written by the mesh tools, and constraint /
+                // draw order keys are owned by the scene clip, not a sprite.
+                return std::nullopt;
+        }
+    }
+
+    const Bone* bone = skeleton.bone(targetID);
+    if (bone == nullptr) return std::nullopt;
+    switch (property) {
+        case AnimationTrackProperty::Translate:
+            return TranslateValue{Vec2(bone->localTransform.position.x, bone->localTransform.position.y)};
+        case AnimationTrackProperty::Rotate:
+            return RotateValue{bone->localTransform.rotation.z};
+        case AnimationTrackProperty::Scale:
+            return ScaleValue{Vec2(bone->localTransform.scale.x, bone->localTransform.scale.y)};
+        case AnimationTrackProperty::Shear:
+            return ShearValue{bone->localTransform.skew};
+        default:
+            // Bones own transform tracks only.
+            return std::nullopt;
+    }
+}
+
+namespace {
+std::optional<SelectedKeyframe> keyframeSelectionAt(
+    const AnimationClip& clip, Uuid targetID, AnimationTrackProperty property, int frame) {
+    for (const Keyframe& kf : clip.keyframesFor(targetID, property)) {
+        if (kf.frame == frame) return SelectedKeyframe{targetID, property, kf.id};
+    }
+    return std::nullopt;
+}
+} // namespace
+
+std::optional<SelectedKeyframe> commitKeyframe(
+    Skeleton& skeleton, std::vector<SceneImage>& images, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues,
+    bool isAnimationEditingEnabled, bool isPoseMode, float time, int currentFrame, Uuid targetID,
+    AnimationTrackProperty property, std::optional<KeyframeValue> value,
+    std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation) {
+    if (!isAnimationEditingEnabled) return std::nullopt;
+
+    for (SceneImage& image : images) {
+        if (image.id != targetID) continue;
+        const std::optional<KeyframeValue> resolvedValue =
+            value.has_value() ? value : resolvedKeyframeValue(skeleton, images, targetID, property);
+        if (!resolvedValue.has_value()) return std::nullopt;
+
+        image.animationClip.upsertKeyframe(targetID, property, currentFrame, *resolvedValue);
+        const std::optional<SelectedKeyframe> selection =
+            keyframeSelectionAt(image.animationClip, targetID, property, currentFrame);
+        applyAnimations(
+            skeleton, images, sceneAnimationClip, constraintSetupValues, isAnimationEditingEnabled,
+            isPoseMode, time, lastBoundImageRotation);
+        return selection;
+    }
+
+    const Bone* bonePtr = skeleton.bone(targetID);
+    if (bonePtr == nullptr) return std::nullopt;
+    const std::optional<KeyframeValue> resolvedValue =
+        value.has_value() ? value : resolvedKeyframeValue(skeleton, images, targetID, property);
+    if (!resolvedValue.has_value()) return std::nullopt;
+
+    Bone bone = *bonePtr;
+    bone.animationClip.upsertKeyframe(targetID, property, currentFrame, *resolvedValue);
+    const std::optional<SelectedKeyframe> selection =
+        keyframeSelectionAt(bone.animationClip, targetID, property, currentFrame);
+    skeleton.setBone(bone);
+    applyAnimations(
+        skeleton, images, sceneAnimationClip, constraintSetupValues, isAnimationEditingEnabled, isPoseMode,
+        time, lastBoundImageRotation);
+    return selection;
+}
+
+std::optional<SelectedKeyframe> commitMeshDeformKeyframe(
+    Skeleton& skeleton, std::vector<SceneImage>& images, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues,
+    bool isAnimationEditingEnabled, bool isPoseMode, float time, int currentFrame, Uuid imageID,
+    std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation) {
+    if (!isAnimationEditingEnabled) return std::nullopt;
+
+    for (SceneImage& image : images) {
+        if (image.id != imageID) continue;
+        const std::vector<Vec2>& vertices =
+            image.meshAnimationDeform.has_value() ? *image.meshAnimationDeform : image.mesh.vertices;
+        if (vertices.empty()) return std::nullopt;
+
+        image.animationClip.upsertKeyframe(
+            imageID, AnimationTrackProperty::MeshDeform, currentFrame, MeshDeformValue{vertices},
+            KeyframeInterpolation::Linear);
+        const std::optional<SelectedKeyframe> selection = keyframeSelectionAt(
+            image.animationClip, imageID, AnimationTrackProperty::MeshDeform, currentFrame);
+        applyAnimations(
+            skeleton, images, sceneAnimationClip, constraintSetupValues, isAnimationEditingEnabled,
+            isPoseMode, time, lastBoundImageRotation);
+        return selection;
+    }
+    return std::nullopt;
+}
+
+AnimationFrameResult applyAnimations(
+    Skeleton& skeleton, std::vector<SceneImage>& images, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues,
+    bool isAnimationEditingEnabled, bool isPoseMode, float time,
+    std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation) {
+    AnimationFrameResult result;
+
+    // Constraint properties must settle before any world matrix is built,
+    // because the solver reads mix/softness/etc. straight off the structs.
+    applyConstraintAnimations(
+        skeleton, sceneAnimationClip, constraintSetupValues, isAnimationEditingEnabled, time);
+    result.animatedDrawOrder = applyDrawOrderAnimation(sceneAnimationClip, isAnimationEditingEnabled, time);
+    result.animatedAttachments =
+        applyAttachmentAnimations(sceneAnimationClip, images, isAnimationEditingEnabled, time);
+
+    if (!isAnimationEditingEnabled) {
+        for (SceneImage& image : images) ensureImageAnimationSpaceConsistency(skeleton, image);
+        const WorldMatrices worldMatrices = skeleton.worldMatrices();
+        applySetupPose(skeleton, images, isPoseMode, time, worldMatrices, lastBoundImageRotation);
+        return result;
+    }
+
+    // In pose mode the artist is hand-posing localTransforms directly;
+    // re-evaluating clips here would silently revert the pose every frame.
+    if (!isPoseMode) {
+        skeleton.setBones(clipSampledBones(skeleton.bones(), time));
+    }
+    // Runs first, against the live array, because it can convert a sprite's
+    // animation space (a structural change, not a pose one).
+    for (SceneImage& image : images) ensureImageAnimationSpaceConsistency(skeleton, image);
+
+    for (SceneImage& image : images) {
+        const SceneImageAnimationPose basePose =
+            image.boneBinding.has_value() ? image.boneBinding->localPose() : image.basePose();
+        const SceneImageAnimationPose pose = image.animationClip.poseAtTime(image.id, basePose, time);
+        image.position = pose.position;
+        image.scale = pose.scale;
+        image.rotation = pose.rotation;
+        image.rotation3D = image.baseRotation3D;
+        image.skew = pose.skew;
+
+        const std::vector<Vec2> deformed = image.animationClip.evaluatedMeshDeformAtTime(image.id, time, {});
+        image.meshAnimationDeform = !deformed.empty() ? std::optional<std::vector<Vec2>>(deformed) : std::nullopt;
+    }
+    // Same frame's ONE solve: constraint and bone animation passes above
+    // have already updated `skeleton`, so this reflects this frame's pose.
+    const WorldMatrices worldMatrices = skeleton.worldMatrices();
+    applyBoneBindings(images, worldMatrices, time, /*sampleClips=*/true, lastBoundImageRotation);
+    return result;
+}
+
 } // namespace umeshcore

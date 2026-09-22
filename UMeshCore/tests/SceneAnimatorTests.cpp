@@ -416,6 +416,186 @@ static void testApplySetupPoseRestoresSpriteFromBasePoseAndClearsDeform() {
     UM_CHECK(!images[0].meshAnimationDeform.has_value());
 }
 
+static void testResolvedKeyframeValuePrefersImageOverBone() {
+    Skeleton skeleton;
+    Bone bone = makeBone(Vec2(1, 2), 0.5f);
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+
+    // A sprite whose id happens to equal the bone's id would be a bug
+    // elsewhere in the app, but the resolution order itself -- images
+    // first, bones second -- is what this test checks, using an unbound
+    // sprite with its own id.
+    SceneImage image;
+    image.id = Uuid::generate();
+    image.animationClip = AnimationClip("sprite");
+    image.position = Vec2(30, 40);
+    image.scale = Vec2(1.5f, 1.5f);
+    std::vector<SceneImage> images{image};
+
+    const auto translate = resolvedKeyframeValue(skeleton, images, image.id, AnimationTrackProperty::Translate);
+    UM_CHECK(translate.has_value());
+    const auto* tv = std::get_if<TranslateValue>(&*translate);
+    UM_CHECK(tv != nullptr);
+    UM_CHECK_NEAR(tv->value.x, 30.0, 1e-4);
+    UM_CHECK_NEAR(tv->value.y, 40.0, 1e-4);
+
+    const auto scale = resolvedKeyframeValue(skeleton, images, image.id, AnimationTrackProperty::Scale);
+    const auto* sv = std::get_if<ScaleValue>(&*scale);
+    UM_CHECK(sv != nullptr && std::abs(sv->value.x - 1.5f) < 1e-4);
+}
+
+static void testResolvedKeyframeValueFallsBackToBone() {
+    Skeleton skeleton;
+    Bone bone = makeBone(Vec2(7, 8), 0.9f);
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+    std::vector<SceneImage> images; // No sprites at all.
+
+    const auto rotate = resolvedKeyframeValue(skeleton, images, bone.id, AnimationTrackProperty::Rotate);
+    UM_CHECK(rotate.has_value());
+    const auto* rv = std::get_if<RotateValue>(&*rotate);
+    UM_CHECK(rv != nullptr && std::abs(rv->value - 0.9f) < 1e-4);
+}
+
+static void testResolvedKeyframeValueUnsupportedPropertyReturnsNullopt() {
+    Skeleton skeleton;
+    Bone bone = makeBone(Vec2::zero(), 0.0f);
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+    std::vector<SceneImage> images;
+
+    UM_CHECK(!resolvedKeyframeValue(skeleton, images, bone.id, AnimationTrackProperty::MeshDeform).has_value());
+    UM_CHECK(!resolvedKeyframeValue(skeleton, images, Uuid::generate(), AnimationTrackProperty::Translate)
+                  .has_value());
+}
+
+static void testCommitKeyframeWritesAndSelectsBoneKeyframe() {
+    Skeleton skeleton;
+    Bone bone = makeBone(Vec2(5, 5), 0.2f);
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+
+    std::vector<SceneImage> images;
+    AnimationClip sceneClip("Scene");
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+    std::unordered_map<Uuid, float, UuidHash> lastRotation;
+
+    const auto selection = commitKeyframe(
+        skeleton, images, sceneClip, setupValues, /*isAnimationEditingEnabled=*/true, /*isPoseMode=*/false,
+        /*time=*/3.0f, /*currentFrame=*/3, bone.id, AnimationTrackProperty::Rotate,
+        /*value=*/std::nullopt, lastRotation);
+
+    UM_CHECK(selection.has_value());
+    UM_CHECK(selection->imageID == bone.id);
+    UM_CHECK(selection->property == AnimationTrackProperty::Rotate);
+
+    const Bone& updated = *skeleton.bone(bone.id);
+    UM_CHECK(updated.animationClip.hasTrack(bone.id, AnimationTrackProperty::Rotate));
+    const auto& keys = updated.animationClip.keyframesFor(bone.id, AnimationTrackProperty::Rotate);
+    UM_CHECK(keys.size() == 1);
+    UM_CHECK(keys[0].frame == 3);
+    const auto* rv = std::get_if<RotateValue>(&keys[0].value);
+    // Resolved from the bone's current local rotation, since no explicit
+    // value was passed.
+    UM_CHECK(rv != nullptr && std::abs(rv->value - 0.2f) < 1e-3);
+}
+
+static void testCommitKeyframeNoOpOutsideAnimateMode() {
+    Skeleton skeleton;
+    Bone bone = makeBone(Vec2::zero(), 0.0f);
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+    std::vector<SceneImage> images;
+    AnimationClip sceneClip("Scene");
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+    std::unordered_map<Uuid, float, UuidHash> lastRotation;
+
+    const auto selection = commitKeyframe(
+        skeleton, images, sceneClip, setupValues, /*isAnimationEditingEnabled=*/false, false, 0.0f, 0,
+        bone.id, AnimationTrackProperty::Translate, std::nullopt, lastRotation);
+    UM_CHECK(!selection.has_value());
+    UM_CHECK(!skeleton.bone(bone.id)->animationClip.hasTrack(bone.id, AnimationTrackProperty::Translate));
+}
+
+static void testCommitMeshDeformKeyframeCapturesCurrentDeform() {
+    Skeleton skeleton;
+    SceneImage image;
+    image.id = Uuid::generate();
+    image.animationClip = AnimationClip("sprite");
+    image.mesh = Mesh::makeQuad("m", Vec2(10, 10));
+    image.meshAnimationDeform = image.mesh.vertices; // Pretend a drag already deformed it.
+    image.meshAnimationDeform->at(0) = Vec2(99, 99);
+    std::vector<SceneImage> images{image};
+
+    AnimationClip sceneClip("Scene");
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+    std::unordered_map<Uuid, float, UuidHash> lastRotation;
+
+    const auto selection = commitMeshDeformKeyframe(
+        skeleton, images, sceneClip, setupValues, /*isAnimationEditingEnabled=*/true, false, 7.0f, 7,
+        image.id, lastRotation);
+    UM_CHECK(selection.has_value());
+    UM_CHECK(selection->property == AnimationTrackProperty::MeshDeform);
+
+    const auto& keys = images[0].animationClip.keyframesFor(image.id, AnimationTrackProperty::MeshDeform);
+    UM_CHECK(keys.size() == 1);
+    const auto* dv = std::get_if<MeshDeformValue>(&keys[0].value);
+    UM_CHECK(dv != nullptr);
+    UM_CHECK_NEAR(dv->value.at(0).x, 99.0, 1e-3);
+}
+
+static void testApplyAnimationsAnimateModeSamplesBoneAndSprite() {
+    Skeleton skeleton;
+    Bone bone = makeBone(Vec2(0, 0), 0.0f);
+    bone.animationClip.upsertKeyframe(bone.id, AnimationTrackProperty::Translate, 0, TranslateValue{Vec2(0, 0)});
+    bone.animationClip.upsertKeyframe(bone.id, AnimationTrackProperty::Translate, 10, TranslateValue{Vec2(20, 0)});
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+
+    SceneImage image;
+    image.id = Uuid::generate();
+    image.animationClip = AnimationClip("sprite");
+    image.basePosition = Vec2(1, 1);
+    std::vector<SceneImage> images{image};
+
+    AnimationClip sceneClip("Scene");
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+    std::unordered_map<Uuid, float, UuidHash> lastRotation;
+
+    applyAnimations(
+        skeleton, images, sceneClip, setupValues, /*isAnimationEditingEnabled=*/true, /*isPoseMode=*/false,
+        /*time=*/5.0f, lastRotation);
+
+    UM_CHECK_NEAR(skeleton.bone(bone.id)->localTransform.position.x, 10.0, 1e-2);
+    // Unbound sprite with no clip of its own: pose falls back to basePose.
+    UM_CHECK_NEAR(images[0].position.x, 1.0, 1e-4);
+}
+
+static void testApplyAnimationsSetupModeRestoresBasePoseAndReturnsDrawOrder() {
+    Skeleton skeleton;
+    Bone bone = makeBone(Vec2(3, 4), 0.1f);
+    bone.localTransform.position = Vec3(999, 999, 0); // Drifted -- must be restored.
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+    std::vector<SceneImage> images;
+
+    const Uuid a = Uuid::generate();
+    AnimationClip sceneClip("Scene");
+    sceneClip.upsertKeyframe(
+        SceneAnimationTarget::drawOrder(), AnimationTrackProperty::DrawOrder, 0, DrawOrderValue{{a}});
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+    std::unordered_map<Uuid, float, UuidHash> lastRotation;
+
+    const AnimationFrameResult result = applyAnimations(
+        skeleton, images, sceneClip, setupValues, /*isAnimationEditingEnabled=*/false, false, 0.0f,
+        lastRotation);
+
+    UM_CHECK_NEAR(skeleton.bone(bone.id)->localTransform.position.x, 3.0, 1e-3);
+    // Setup mode never animates the draw order, regardless of its track.
+    UM_CHECK(!result.animatedDrawOrder.has_value());
+}
+
 UM_TEST_MAIN_BEGIN()
     testUnanimatedBoneKeepsBasePose();
     testAnimatedBoneSamplesTranslateTrack();
@@ -438,4 +618,12 @@ UM_TEST_MAIN_BEGIN()
     testApplySetupPoseRestoresBoneFromBaseWhenNotPosing();
     testApplySetupPosePreservesLocalTransformWhilePosing();
     testApplySetupPoseRestoresSpriteFromBasePoseAndClearsDeform();
+    testResolvedKeyframeValuePrefersImageOverBone();
+    testResolvedKeyframeValueFallsBackToBone();
+    testResolvedKeyframeValueUnsupportedPropertyReturnsNullopt();
+    testCommitKeyframeWritesAndSelectsBoneKeyframe();
+    testCommitKeyframeNoOpOutsideAnimateMode();
+    testCommitMeshDeformKeyframeCapturesCurrentDeform();
+    testApplyAnimationsAnimateModeSamplesBoneAndSprite();
+    testApplyAnimationsSetupModeRestoresBasePoseAndReturnsDrawOrder();
 UM_TEST_MAIN_END()

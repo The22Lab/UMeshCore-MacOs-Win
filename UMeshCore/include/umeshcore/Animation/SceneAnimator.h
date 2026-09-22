@@ -51,13 +51,23 @@
 // sprites via `applyBoneBindings` with `sampleClips=false` -- a bound
 // sprite's stored local pose IS the Setup-mode answer.
 //
-// Still to port into this file: the whole-scene `applyAnimations`/
-// `solveRigPose` orchestrators themselves -- see ROADMAP.md's Phase 2
-// status. `ToolManager`'s bone/sprite mutators (`moveBoneRoot`,
-// `setImagePosition`, ...) branch on whether animation editing is enabled
-// and either write straight to the base pose or call `commitKeyframe` +
-// re-run this pipeline, so they wait on the rest of this file, not just
-// this first piece.
+// Closing out the file: `resolvedKeyframeValue`/`resolvedAnimatedTranslate`/
+// `resolvedAnimatedRotation` (what a bone/sprite's CURRENT value is, in the
+// shape a keyframe stores -- the "key" button reads this to know what to
+// write), `commitKeyframe`/`commitMeshDeformKeyframe` (write that value as a
+// keyframe at the current frame and re-run the whole pipeline so the change
+// is immediately visible), and `applyAnimations` itself, the whole-scene
+// per-frame orchestrator every piece above exists to serve.
+//
+// `solveRigPose`/`rigPose(atFrame:)` (point-sampling a rig at an arbitrary
+// frame for a Scene-compositing instance, without touching the live scene)
+// remain unported -- Phase 5 scope, noted throughout this file's comments
+// wherever a function's math is shared with that future caller.
+//
+// `ToolManager`'s bone/sprite mutators (`moveBoneRoot`, `setImagePosition`,
+// ...) are unblocked by this file now: they branch on whether animation
+// editing is enabled and either write straight to the base pose or call
+// `commitKeyframe`, both of which this file now supports end to end.
 //
 // Deliberate divergence from the Swift source: `applyBoneBindings` there
 // reads bone world matrices from `SceneManager.frameWorldMatrices()`, a
@@ -205,5 +215,84 @@ std::unordered_map<std::string, std::optional<Uuid>> applyAttachmentAnimations(
 void applySetupPose(
     Skeleton& skeleton, std::vector<SceneImage>& images, bool isPoseMode, float time,
     const WorldMatrices& worldMatrices, std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation);
+
+// A sprite's current world-space translate, in the frame its OWN clip
+// stores translate keyframes in (bone-local when bound, world otherwise) --
+// the exact inverse of how a bound sprite's pose gets placed in
+// `boundImagePose`.
+Vec2 resolvedAnimatedTranslate(const Skeleton& skeleton, const SceneImage& image);
+// Same, for rotation.
+float resolvedAnimatedRotation(const Skeleton& skeleton, const SceneImage& image);
+
+// What a bone or sprite's CURRENT value of `property` is, in the shape a
+// keyframe stores it -- what the "key" button in the Swift app writes when
+// pressed with no explicit value. `targetID` is checked against `images`
+// first, then `skeleton`'s bones; a property this port's transform-only
+// coverage doesn't resolve (anything but translate/rotate/scale/shear)
+// returns nullopt, matching the Swift source's "deform keys are written by
+// the mesh tools, constraint/draw-order keys are owned by the scene clip"
+// comment.
+std::optional<KeyframeValue> resolvedKeyframeValue(
+    const Skeleton& skeleton, const std::vector<SceneImage>& images, Uuid targetID,
+    AnimationTrackProperty property);
+
+// Writes `value` (or, when nullopt, `resolvedKeyframeValue`'s answer) as a
+// keyframe on `targetID`'s own clip at `currentFrame`, then re-runs
+// `applyAnimations` so the change is immediately visible. No-ops (returns
+// nullopt, writes nothing) outside Animate mode, or when there is no value
+// to write. Returns the keyframe that ended up selected, for the caller to
+// store as its own "what the timeline currently has selected" state --
+// this library holds no such state itself (see the file header's
+// `applyDrawOrderAnimation` note for why).
+std::optional<SelectedKeyframe> commitKeyframe(
+    Skeleton& skeleton, std::vector<SceneImage>& images, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues,
+    bool isAnimationEditingEnabled, bool isPoseMode, float time, int currentFrame, Uuid targetID,
+    AnimationTrackProperty property, std::optional<KeyframeValue> value,
+    std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation);
+
+// Same shape as `commitKeyframe`, specialized for a mesh-deform keyframe:
+// captures `imageID`'s current per-vertex deform (or its base mesh, if
+// nothing is deformed yet) and keys it at `currentFrame`, linearly
+// interpolated (mesh deform tracks are never stepped).
+std::optional<SelectedKeyframe> commitMeshDeformKeyframe(
+    Skeleton& skeleton, std::vector<SceneImage>& images, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues,
+    bool isAnimationEditingEnabled, bool isPoseMode, float time, int currentFrame, Uuid imageID,
+    std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation);
+
+// The result of one whole-scene per-frame animation pass -- everything
+// `applyAnimations` produces that isn't already reflected by mutating
+// `skeleton`/`images` in place. See the file header's note on why these
+// are returned rather than written into persistent fields.
+struct AnimationFrameResult {
+    std::optional<std::vector<Uuid>> animatedDrawOrder;
+    std::unordered_map<std::string, std::optional<Uuid>> animatedAttachments;
+};
+
+// The whole-scene per-frame animation pass: constraints, draw order,
+// attachments, then either the Setup pose (animation editing off) or a
+// full Animate-mode sample of every bone and sprite's own clip, finished by
+// placing bound sprites on their bones. Mutates `skeleton` and `images` in
+// place; see each helper this function calls (all declared above in this
+// same file) for exactly what it does and why. Order matches
+// `SceneManager.applyAnimations` exactly: constraint animations must settle
+// before any world matrix is built, since the solver reads mix/softness/
+// etc. straight off the constraint structs.
+//
+// Deliberate divergence, matching `applyBoneBindings`'s own: this function
+// solves `skeleton.worldMatrices()` itself, internally, right before the
+// call that needs it (placing bound sprites) -- once, after this frame's
+// constraint and bone animation passes have already updated `skeleton`, so
+// the matrices reflect this frame's pose. It never steps physics (physics
+// stays the caller's concern throughout this port, per
+// `Skeleton::worldMatrices()`'s own comment); a caller wanting physics-
+// driven secondary motion to affect where bound sprites sit blends that in
+// separately via `PhysicsConstraintSystem::applyConstraint` (Phase 5).
+AnimationFrameResult applyAnimations(
+    Skeleton& skeleton, std::vector<SceneImage>& images, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues,
+    bool isAnimationEditingEnabled, bool isPoseMode, float time,
+    std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation);
 
 } // namespace umeshcore
