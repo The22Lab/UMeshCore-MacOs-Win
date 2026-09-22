@@ -537,12 +537,71 @@ Special-case validation needs, carried over into each phase's own tests:
    the found/missing-asset flag, embed-mode byte inlining, and the
    meshDeform fix specifically. All 24 test binaries pass.
 
-   **Not yet started**: the native `.umesh` *project* package
+   Still not started from the binary side: `writeScenesChunk`, deferred to
+   Phase 5 alongside `SceneComposition` (see above).
+
+   **JSON foundation: started.** The native `.umesh` *project* package
    (`Data/ProjectPersistence.swift`, 1,905 lines, ~35 `Saved*` structs --
-   distinct from this binary export format, see file header note below);
-   UMJSON interchange (`Export/JSON/*.swift`, ~1,450 lines combined); and
-   `writeScenesChunk`, deferred to Phase 5 alongside `SceneComposition` (see
-   above).
+   distinct from the binary export format above) and UMJSON interchange
+   (`Export/JSON/*.swift`, ~1,450 lines combined) are both plain JSON, so
+   before porting either, a research pass (3 parallel investigations, same
+   approach as the BinaryExporter scoping) nailed down their actual shape:
+   - The native project format is a **package directory** (`.umesh` as a
+     macOS `FileWrapper` bundle: `project.json` manifest + a sibling
+     `Assets/` folder of SHA-256-deduplicated PNGs), not a single file or a
+     zip -- `ProjectPersistence.swift` also reads a legacy flat-JSON
+     fallback for pre-package saves. Most of its ~35 `Saved*` types are
+     synthesized `Codable` with no custom logic; a few (`SavedBone`,
+     `SavedMesh`, `SavedScale2`) hand-roll `init(from:)` purely for
+     backward-compatible defaulting (`decodeIfPresent(...) ?? default`) so
+     older save files keep opening. Every UUID-keyed relationship is stored
+     as a sorted array of `{id, value}` records, never a JSON object keyed
+     by UUID string -- documented in the Swift source itself as a
+     diffability choice.
+   - UMJSON is a single flat, self-contained-or-referencing JSON file
+     (`UMJSONDocument`), a fully separate model from `Saved*` (different
+     conventions throughout: string IDs instead of `UUID`, flat `[Float]`
+     arrays instead of `SavedSIMD2`/`3`, some unit differences called out in
+     Swift's own comments). Confirmed export-only by grep, same situation
+     as the binary format: no `UMJSONDocument` decode call or importer type
+     exists anywhere in the Swift tree.
+   - Both formats independently avoid UUID-keyed JSON objects and need
+     nothing beyond primitives/strings/arrays/objects (UMJSON's optional
+     embedded-texture bytes are just base64 text, an ordinary JSON string)
+     -- one shared JSON module serves both; only the native format's
+     package/directory/PNG-dedup layer sits on top of it and doesn't apply
+     to UMJSON.
+
+   Built on that finding: `Serialization/Json.h/.cpp`, a minimal
+   `JsonValue` (Null/Bool/Number/String/Array/Object) + writer (`dump`,
+   pretty-printed and always sorted-key since `Object` is a `std::map`,
+   matching the spirit of Swift's `[.sortedKeys, .prettyPrinted]` without
+   the "no external dependencies" cost of a real library -- see the file
+   header) + a hand-written recursive-descent parser (`parse`, full escape
+   handling including UTF-16 surrogate-pair combining, bounds-checked and
+   throws `std::runtime_error` with a position on malformed input, same
+   posture as `BinaryReader`). New code, not a port -- `Codable`/
+   `JSONEncoder`/`JSONDecoder` have no C++ equivalent. Explicitly NOT
+   trying for Swift byte-parity (documented at length in the header,
+   parallel to `BinaryReader.h`'s reasoning): for the native project
+   format, Swift's own app is the only reader that format has ever had, and
+   this increment isn't trying to satisfy it yet, only to round-trip
+   correctly against this module's own parser. A `valueOr(key, fallback)`
+   helper mirrors the `decodeIfPresent(...) ?? default` pattern
+   `ProjectPersistence.swift` uses throughout, ready for the `Saved*`-
+   equivalent encoders that come next.
+
+   Tested: `tests/JsonTests.cpp` (14 tests) -- every value kind round-trips
+   through `dump`/`parse` (both pretty and compact), string escaping
+   including a UTF-16 surrogate pair, sorted-key ordering, nested
+   object/array round-trips, `valueOr`'s three cases (present / present-
+   but-null / absent), wrong-type-access and malformed-input error paths.
+   All 25 test binaries pass.
+
+   **Not yet started**: the ~35 `Saved*`-equivalent structs and the actual
+   `.umesh` project package encoder/decoder (manifest + `Assets/`
+   directory + SHA-256 dedup) built on top of this JSON module; the UMJSON
+   document builder built on top of it too.
 4. **Shared render geometry layer** — platform-agnostic geometry building/
    batching/culling/projection/lighting math, exposed as POD vertex/uniform
    buffers consumed by thin Metal and DirectX 11/12 backends. Target the

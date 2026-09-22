@@ -29,6 +29,7 @@ add_library(umeshcore STATIC
     Editor/Tools/BoneTool.cpp
     Editor/ToolManager.cpp
     Serialization/BinaryExporter.cpp
+    Serialization/Json.cpp
 )
 
 target_include_directories(umeshcore
