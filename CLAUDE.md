@@ -27,6 +27,7 @@ UMeshCore-MacOs-Win/
 ├── UltraMesh 2d animation/      ← fuente Swift original (referencia)
 └── UMeshCore/
     ├── ROADMAP.md               ← registro largo: el porqué de cada decisión
+    ├── HANDOFF.md               ← traspaso: decisiones abiertas y por dónde seguir
     ├── README.md
     ├── include/umeshcore/<Módulo>/*.h
     ├── src/<Módulo>/*.cpp

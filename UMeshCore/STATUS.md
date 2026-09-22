@@ -13,6 +13,7 @@ world-to-screen que ya discrepaban entre sí).
 
 | Buscas | Está en |
 |---|---|
-| Fases, pendientes, plan de Fase 4, convenciones | `../CLAUDE.md` |
+| Fases, pendientes, convenciones | `../CLAUDE.md` |
+| Traspaso: qué se decidió, qué quedó abierto, por dónde seguir | `HANDOFF.md` |
 | El porqué detallado de cada decisión y divergencia | `ROADMAP.md` |
 | Qué porta un archivo y qué dejó fuera | La cabecera de ese archivo |
