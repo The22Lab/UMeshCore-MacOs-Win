@@ -2,13 +2,27 @@
 
 // 1:1 port of `UltraMesh 2d animation/UndoRedoManager.swift`.
 //
-// SceneSnapshot omits two Swift fields not yet ported: `constraintSetupValues`
-// (Data/ConstraintAnimation.swift, authored-vs-animated constraint value
-// bookkeeping) and `sceneCompositions`/`selectedSceneCompositionID` (Scene
-// compositing, Phase 5). Both are pure additive fields in the Swift struct,
-// so adding them here later is a mechanical, non-breaking change -- this
-// class's undo/redo stack logic itself does not need to change when they
-// land, only the SceneSnapshot struct grows.
+// `SceneSnapshot` now carries all NINE fields the Swift struct does. The
+// last three arrived with Phase 5 and were called out here as a mechanical
+// addition when their types landed; they are not decoration:
+//
+//   - `constraintSetupValues` -- the AUTHORED (setup pose) constraint
+//     values. Restored alongside the clip so undoing a keyed change cannot
+//     leave a constraint sitting at an evaluated value.
+//   - `sceneCompositions` / `selectedSceneCompositionID` -- so undoing an
+//     "Align Camera to View", a layer edit or a scene deletion restores
+//     THE SHOT. Without them undo rolls the rig back and leaves the camera
+//     where the mistake put it.
+//
+// The fly camera (`sceneViewCamera`) is deliberately ABSENT, matching
+// Swift: where the artist is standing is not an edit.
+//
+// What is still not snapshotted, in Swift or here, and is worth knowing
+// before assuming it is a bug: `hierarchyItems`, `authoredDrawOrder`, all
+// selection, and the playback range. Hierarchy names and order are
+// therefore not undoable today -- Swift's `applySnapshot` only FILTERS
+// `hierarchyItems` afterwards, dropping entries whose id is neither a live
+// image nor a live bone.
 
 #include <optional>
 #include <vector>
@@ -19,6 +33,10 @@
 #include "umeshcore/Model/SceneImage.h"
 #include "umeshcore/Model/Skeleton.h"
 #include "umeshcore/Model/Skin.h"
+#include "umeshcore/Constraints/ConstraintAnimation.h"
+#include "umeshcore/Scene/SceneComposition.h"
+
+#include <unordered_map>
 
 namespace umeshcore {
 
@@ -32,6 +50,11 @@ struct SceneSnapshot {
     std::vector<Skin> skins;
     std::optional<Uuid> activeSkinID;
     std::vector<AnimationEvent> animationEvents;
+    // Authored constraint values -- see the file header.
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> constraintSetupValues;
+    // The shot, so undo restores it too.
+    std::vector<SceneComposition> sceneCompositions;
+    std::optional<Uuid> selectedSceneCompositionID;
 };
 
 class UndoRedoManager {

@@ -68,8 +68,22 @@ una fuente de bugs de transcripción. Si necesitas algo nuevo, escríbelo.
 
 ### 2. "Inyectar lo necesario", no portar los god objects
 
-`SceneManager` tiene 7376 líneas y ~400 `@Published` mezclando datos de
-modelo con estado de UI. **No intentes partirlo.** En su lugar:
+`SceneManager` tiene 7376 líneas y **87 ocurrencias de `@Published`** (77
+declaraciones) mezclando datos de modelo con estado de UI. **No intentes
+partirlo.** En su lugar:
+
+> **Corrección (Fase 6a).** Este archivo y `EditorScene.h` decían "~400
+> `@Published`". Es falso, y la cifra inflada importa: hacía parecer
+> imposible una adaptación que medida resulta ser **26 propiedades de
+> modelo, 38 de UI pura y 5 cachés derivadas**. Y las dos propiedades de
+> modelo más cargadas —`images` y `skeleton`— **no son `@Published` en
+> absoluto** (`SceneManager.swift:22` y `:42`): son `var` con
+> `willSet { announceChange() }`, donde `announceChange()` es un limitador
+> a **12 Hz** durante playback. Es deliberado: `applyAnimations()` tiene 49
+> call sites, y publicarlas dispararía 60 notificaciones/segundo a 12
+> vistas. Cualquier migración tiene que preservar ese `willSet`/`didSet` a
+> mano, porque `framePoseCache`, `rigPoseCache` y `RenderMeshCache` se
+> indexan por los tokens que incrementa el `didSet`.
 
 - `EditorScene` es el agregado mínimo que las tools necesitan.
 - Los assets se pasan como parámetro explícito (`AssetRecord`), igual que

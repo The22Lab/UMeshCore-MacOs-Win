@@ -1939,7 +1939,7 @@ Special-case validation needs, carried over into each phase's own tests:
 
 ## Named risks
 
-1. **`SceneManager.swift` god-object** (7,376 lines, ~400 `@Published`
+1. **`SceneManager.swift` god-object** (7,376 lines, 87 `@Published`
    properties mixing true model data with UI-only state). Do not attempt to
    split it in one pass — let each landed phase mechanically absorb the
    properties it makes redundant; only audit "what's left" after Phase 5.

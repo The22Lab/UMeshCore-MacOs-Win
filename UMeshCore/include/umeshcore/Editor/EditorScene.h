@@ -1,11 +1,26 @@
 #pragma once
 
 // A minimal, portable "Scene" aggregate for `ToolManager`/the 8 tools --
-// what `Data/SceneManager.swift` (~7,400 lines, ~400 `@Published`
+// what `Data/SceneManager.swift` (7,376 lines, 87 `@Published`
 // properties mixing true model data with UI-only state) reduces to once
-// every property a tool actually needs is separated from the ~350 that are
+// every property a tool actually needs is separated from the ones that are
 // pure Mac/Windows UI chrome (panel visibility, hover highlighting for
-// SwiftUI views, timeline scroll position, etc.). See ROADMAP.md's named
+// SwiftUI views, timeline scroll position, etc.).
+//
+// Measured during Phase 6a, because the number used to be wrong here: of
+// the 77 `@Published` declarations, 26 are model data with a counterpart
+// in this port, 38 are unambiguously UI, and 5 are derived caches. This
+// header (and CLAUDE.md) previously said "~400 `@Published`" and "~350 UI
+// chrome"; both were guesses, and the inflated figure made the split look
+// hopeless when it is roughly one third to two thirds.
+//
+// The two heaviest model properties are NOT `@Published` at all, which is
+// the thing most likely to be broken by accident: `images` and `skeleton`
+// are plain `var`s with `willSet { announceChange() }`, and
+// `announceChange()` rate-limits to 12 Hz while the transport rolls.
+// Publishing them would fire 60 notifications a second into a dozen
+// observing views, since `applyAnimations()` alone has 49 call sites.
+// See ROADMAP.md's named
 // risk #1: this is deliberately NOT a full SceneManager port -- each later
 // phase absorbs more of SceneManager's surface into this class or a sibling
 // one as tools/subsystems that need it get ported, rather than attempting
