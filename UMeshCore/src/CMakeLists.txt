@@ -26,6 +26,7 @@ add_library(umeshcore STATIC
     Editor/Tools/ScaleTool.cpp
     Editor/Tools/SkewTool.cpp
     Editor/Tools/RotateTool.cpp
+    Editor/Tools/BoneTool.cpp
 )
 
 target_include_directories(umeshcore
