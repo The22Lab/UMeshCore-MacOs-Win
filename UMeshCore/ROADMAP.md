@@ -1376,8 +1376,69 @@ Special-case validation needs, carried over into each phase's own tests:
    launch frame drags a six-frame mean most of the way to the target and
    would cost a rung). All 40 test binaries pass.
 
-   **Not yet started**: the reference shader math (and the Metal/DirectX
-   backends themselves, which are Phase 6).
+   `Render/SceneShaderMath.h/.cpp` ports `SceneGPU/SceneShaders.metal`
+   (1022 L) and `SceneGizmoShaders.metal` (80 L) as a C++ REFERENCE: the
+   shading authored once, so MSL and HLSL become transcriptions that are
+   diffed numerically against it rather than read side by side. That is
+   Risk #5's stated mitigation, and this is the artifact it needed.
+
+   It also replaces something that was lost. The `.metal` banner says it is
+   "mirrored by `Editor/gpu_mirror.py` and checked against
+   `Editor/lighting_mirror.py`, which stays the normative reference for
+   what a lit pixel is worth", because there was no Metal toolchain where
+   it was written. Neither script is here -- there is no Python in this
+   repository at all -- so the normative reference did not survive. This
+   file is executable, tested, and diffable against a GPU capture on either
+   platform.
+
+   Texture sampling is MODELLED rather than approximated: bilinear,
+   clamp-to-edge, on texel centres, which is what a Metal or Direct3D
+   linear sampler does. That is what produced the finding below.
+
+   **FINDING: the falloff sampler and the CPU table do not agree.** The
+   shader's comment says the off-by-one the CPU spells out (`u * (n - 1)`,
+   not `u * n`) "is the sampler's business, not ours". It is -- and the
+   sampler's business is texel CENTRES, `u * n - 0.5` -- so the two read
+   different entries of the same table. Measured over a 256-entry table:
+   0.29/255 on the default `smooth` curve, 0.50/255 on `linear`, and
+   **3.21/255 on `inverseSquare` at u = 0.025**. Three quantisation steps,
+   in the steepest part of the steepest preset, means the GPU and the CPU
+   compositor put visibly different numbers in the same pixel of the same
+   frame. The fix is one line on whichever side is declared normative
+   (tabulate at the sampler's positions, or address the table at texel
+   centres); it is left to the shell that first ships both paths, because
+   changing either side here would silently diverge from the Swift
+   original. It is now a number in a test rather than a sentence nobody
+   checked.
+
+   Tested: `tests/SceneShaderMathTests.cpp` (19 tests), and the first four
+   are the ones that matter, because they are CROSS-CHECKS against the
+   already-ported CPU implementation of the same arithmetic:
+   `shapedLambert` and `lightLambert` agree BIT FOR BIT (two transcriptions
+   of one formula that differ at all have already drifted),
+   `lightAttenuation` agrees to within the sampler gap above and nothing
+   else, and a whole lit pixel agrees end to end with `SceneLighting::shade`
+   composited the way the fragment composites it -- which is the comparison
+   `lighting_mirror.py` existed to make. The rest pin the behaviours whose
+   failure a still frame cannot show: the tangent frame staying a rotation
+   and surviving a bone scaled to nothing, the skinned path keeping the
+   layer's lift (the 652-unit bug), a normal map at rest changing nothing
+   and strength only tilting, a flat height field marching nowhere (which
+   is why offering the normal map's alpha as a height source is safe), the
+   secant refinement landing off the step boundaries (the staircase foil),
+   the grazing guard bounding the sweep at ten times the depth, a light
+   below the surface casting no self-shadow, a blocker BEHIND the receiver
+   casting nothing, a flat 2D light casting no shadow at all (which falls
+   out of the arithmetic rather than a special case), the deepest shadow
+   winning rather than accumulating, a sprite that asks for nothing
+   rendering bit for bit as it did, the additive term scaled by alpha so no
+   glow rectangle appears around a sprite's transparent margin, the
+   silhouette discard, the full-screen triangle's orientation, and the
+   gizmo's own key light never going black.
+
+   **Phase 4 is complete.** Nine pieces planned: eight ported, one
+   (`ArcGeometryBuilder`/`SphereGeometryBuilder`) established as dead code
+   and deliberately not ported. All 41 test binaries pass.
 5. **Scene compositing / lighting / physics secondary motion / export** —
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)

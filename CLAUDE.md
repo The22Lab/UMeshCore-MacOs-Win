@@ -46,7 +46,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-40 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+41 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -106,8 +106,8 @@ errores reales.
 | 1 | Math + modelo de datos | ✅ Completa salvo 3 conveniencias de editor |
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
-| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 8 hechas, 1 restante (1 descartada: código muerto)** |
-| 5 | Scene compositing, luces, física secundaria, export | ⬜ No empezada |
+| 4 | Capa de geometría de render compartida | ✅ Completa (1 pieza descartada: código muerto) |
+| **5** | **Scene compositing, luces, física secundaria, export** | **⬜ Siguiente** |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
 
@@ -197,7 +197,7 @@ porta — es estado de shell. Se preserva textualmente vía
 
 ---
 
-## Fase 4 — la fase actual
+## Fase 4 — completa
 
 Objetivo: geometría/batching/culling/proyección/luz agnóstica de
 plataforma, expuesta como buffers POD que consumen backends finos de Metal
@@ -430,11 +430,56 @@ suposición escondida.
 `FrameCostMeter` toma la **mediana**, no la media: un frame de 80 ms porque
 la app arrancaba arrastra una media de seis frames y cuesta un escalón.
 
-### Pendiente, en orden de dependencia
+### Pieza 9 — hecha (y con ella la fase)
 
-| # | Portar | Referencia Swift | L | Notas |
-|---|---|---|---|---|
-| 9 | Shader math de referencia | `Render/SceneGPU/SceneShaders.metal` | 1022 | Autorar **una vez** en C++ y transcribir a MSL y HLSL con cross-check numérico (ROADMAP Riesgo #5). |
+**`Render/SceneShaderMath.h/.cpp`** ← `SceneGPU/SceneShaders.metal` (1022 L)
++ `SceneGizmoShaders.metal` (80 L). 19 tests.
+
+La matemática del shader **autorada una vez en C++** (Riesgo #5): MSL y
+HLSL serán transcripciones que se diffean **numéricamente** contra esto, no
+por inspección visual.
+
+**Sustituye una pieza perdida.** El banner del `.metal` dice que está
+"espejado por `Editor/gpu_mirror.py` y comprobado contra
+`Editor/lighting_mirror.py`, que sigue siendo la referencia normativa de lo
+que vale un píxel iluminado", porque no había toolchain Metal. En este repo
+**no hay ni un solo `.py`**. Este archivo es esa referencia, y además se
+ejecuta y se testea.
+
+El muestreo de texturas está **modelado**, no aproximado: bilineal,
+clamp-to-edge, centros de téxel — que es lo que hace un sampler de
+Metal/D3D. De ahí salió el hallazgo de abajo.
+
+#### ⚠️ Hallazgo: el sampler de falloff y la tabla de CPU no coinciden
+
+El comentario del shader dice que el off-by-one "es asunto del sampler, no
+nuestro". Lo es — y el asunto del sampler son los **centros de téxel**:
+direcciona `u*n - 0.5` donde la CPU direcciona `u*(n-1)`. Leen entradas
+distintas de la misma tabla. Medido sobre 256 entradas:
+
+| Curva | Peor diferencia |
+|---|---|
+| `smooth` (la de por defecto) | 0.29 / 255 |
+| `linear` | 0.50 / 255 |
+| **`inverseSquare`** | **3.21 / 255** (en u ≈ 0.025) |
+
+Tres pasos de cuantización en la parte más empinada del preset más
+empinado: GPU y compositor CPU pondrían números visiblemente distintos en
+el mismo píxel. El arreglo es **una línea** en el lado que se declare
+normativo (tabular en las posiciones del sampler, o direccionar la tabla
+por centros de téxel). Se deja al shell que primero embarque los dos
+caminos — tocar cualquiera de los dos lados aquí divergiría en silencio del
+Swift — pero ya es un número en un test y no una frase que nadie comprobó.
+
+#### Los cross-checks que ahora existen
+
+- `shapedLambert` y `lightLambert`: **idénticos bit a bit** entre
+  `SceneShaderMath` y `SceneLighting`. Dos transcripciones de una fórmula
+  que difieran *en algo* ya han derivado.
+- `lightAttenuation`: igual salvo el hueco del sampler de arriba.
+- **Un píxel iluminado entero**, de punta a punta, contra
+  `SceneLighting::shade` + el composite. Eso es exactamente lo que
+  `lighting_mirror.py` existía para comparar.
 
 ### Qué NO portar de `Render/`
 
@@ -452,11 +497,27 @@ Los archivos de `Render/` citan repetidamente
 `verify_scene_gpu_transcription.py` — todos bajo `Editor/` — con cifras
 concretas ("313 px", "51 capas de 20 000 cámaras", "1.4e-08 px").
 
-**No existen en este repo.** Verificado con `find . -name "verify_*.py"`.
-Las cifras son la mejor evidencia de que esa matemática fue validada, pero
-**no se pueden re-ejecutar desde aquí**. Tenlo presente al portar culling y
-los structs de GPU: el comentario describe una verificación que no está a
-mano. Si aparecen en otra copia del proyecto, traerlos sería valioso.
+**No existen en este repo.** Ni esos ni `gpu_mirror.py` /
+`lighting_mirror.py` (que el `.metal` llama "la referencia normativa de lo
+que vale un píxel iluminado"): no hay **ningún** `.py` en el repositorio.
+
+Qué se hizo al respecto en la Fase 4, en vez de anotarlo y seguir:
+
+- **Reproducida**: la cifra de `shapedLambert` (3 327 de 20 001 muestras,
+  hasta 1.5e-08). El test la recalcula en la misma malla y sale exacta.
+  Funciona porque los dos lados son float32 — la premisa de esta librería
+  de math, así que el acuerdo es evidencia *sobre la premisa*.
+- **Sustituida**: `verify_scene_gpu_transcription.py` → `static_assert` de
+  tamaño/alineación/offset en el header. Un compilador que disponga los
+  structs de otra forma no compila la librería.
+- **Sustituida**: `gpu_mirror.py` / `lighting_mirror.py` →
+  `Render/SceneShaderMath.h/.cpp`, que además se ejecuta y se diffea contra
+  `SceneLighting` en los tests.
+- **No reproducibles**: las cifras de culling (51 capas de 20 000), de
+  skinning (652 / 700 / 1343 unidades) y de gizmo-drag (313 px). Los tests
+  afirman la *propiedad* que medían, no el número.
+
+Si aparecen en otra copia del proyecto, traerlos seguiría siendo valioso.
 
 ---
 
