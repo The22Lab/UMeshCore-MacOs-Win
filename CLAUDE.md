@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-48 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+49 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -172,7 +172,13 @@ textura **cargada**, y no hay pipeline de decodificación de imágenes.
   los dos subsistemas está modelado en `EditorScene`.
 - `solveRigPose` / `rigPose(atFrame:)` de `SceneAnimator` — Fase 5.
 
-**Deuda marcada, primera mordida hecha** (Riesgo #6 del ROADMAP):
+**Deuda marcada, segunda mordida hecha** (Riesgo #6 del ROADMAP):
+`Editor/SceneGizmoState.h` extrae la **forma** del gizmo de Scene del
+cuerpo de vista SwiftUI: la basis por herramienta, la cámara estabilizada,
+la escala única, los ejes/anillos/planos proyectados. Es de donde parten
+**los dos** consumidores (hit-test en CPU y layout de GPU), que es
+justamente lo que el Swift dice que evita que discrepen. Falta la
+matemática de arrastre.
 `ringFrame` y las constantes de geometría que el mesh builder del gizmo
 necesita ya están extraídas a `Render/SceneGizmoLayout.h` (Fase 4, pieza
 5). Lo demás sigue dentro de las vistas:
