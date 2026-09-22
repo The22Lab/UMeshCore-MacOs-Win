@@ -264,6 +264,158 @@ static void testApplyConstraintAnimationsNoOpWhenNothingAnimated() {
     UM_CHECK_NEAR(skeleton.ikConstraints[0].mix_, 0.55, 1e-5);
 }
 
+static void testApplyDrawOrderAnimationReturnsNulloptWhenNotAnimating() {
+    AnimationClip sceneClip("Scene");
+    sceneClip.upsertKeyframe(
+        SceneAnimationTarget::drawOrder(), AnimationTrackProperty::DrawOrder, 0,
+        DrawOrderValue{{Uuid::generate(), Uuid::generate()}});
+
+    UM_CHECK(!applyDrawOrderAnimation(sceneClip, /*isAnimationEditingEnabled=*/false, 0.0f).has_value());
+}
+
+static void testApplyDrawOrderAnimationReturnsKeyedOrder() {
+    const Uuid a = Uuid::generate();
+    const Uuid b = Uuid::generate();
+    AnimationClip sceneClip("Scene");
+    sceneClip.upsertKeyframe(
+        SceneAnimationTarget::drawOrder(), AnimationTrackProperty::DrawOrder, 0, DrawOrderValue{{a, b}});
+    sceneClip.upsertKeyframe(
+        SceneAnimationTarget::drawOrder(), AnimationTrackProperty::DrawOrder, 10, DrawOrderValue{{b, a}});
+
+    // Stepped: at frame 5 (before the second key), the order is still the
+    // first key's, not an interpolation of the two.
+    const auto order = applyDrawOrderAnimation(sceneClip, /*isAnimationEditingEnabled=*/true, 5.0f);
+    UM_CHECK(order.has_value());
+    UM_CHECK(order->size() == 2);
+    UM_CHECK((*order)[0] == a && (*order)[1] == b);
+}
+
+static void testSlotNamesInFirstAppearanceOrder() {
+    SceneImage first;
+    first.slotName = "hat";
+    SceneImage second;
+    second.name = "shirt"; // slotName empty -> effectiveSlotName falls back to name.
+    SceneImage third;
+    third.slotName = "hat"; // Repeats the first slot -- must not duplicate.
+
+    const auto names = slotNames({first, second, third});
+    UM_CHECK(names.size() == 2);
+    UM_CHECK(names[0] == "hat");
+    UM_CHECK(names[1] == "shirt");
+}
+
+static void testApplyAttachmentAnimationsResolvesKeyedSlotAndOmitsUnkeyed() {
+    SceneImage hatSlot;
+    hatSlot.slotName = "hat";
+    SceneImage shirtSlot;
+    shirtSlot.slotName = "shirt"; // No attachment track for this one.
+
+    const Uuid strawHat = Uuid::generate();
+    AnimationClip sceneClip("Scene");
+    sceneClip.upsertKeyframe(
+        SlotAnimationTarget::id("hat"), AnimationTrackProperty::Attachment, 0,
+        AttachmentValue{strawHat});
+
+    const auto resolved =
+        applyAttachmentAnimations(sceneClip, {hatSlot, shirtSlot}, /*isAnimationEditingEnabled=*/true, 0.0f);
+    UM_CHECK(resolved.size() == 1);
+    const auto it = resolved.find("hat");
+    UM_CHECK(it != resolved.end());
+    UM_CHECK(it->second.has_value() && *it->second == strawHat);
+    UM_CHECK(resolved.find("shirt") == resolved.end());
+}
+
+static void testApplyAttachmentAnimationsExplicitlyEmptySlot() {
+    SceneImage hatSlot;
+    hatSlot.slotName = "hat";
+
+    AnimationClip sceneClip("Scene");
+    // A nil-valued attachment keyframe means "show nothing", distinct from
+    // no track at all.
+    sceneClip.upsertKeyframe(
+        SlotAnimationTarget::id("hat"), AnimationTrackProperty::Attachment, 0,
+        AttachmentValue{std::nullopt});
+
+    const auto resolved =
+        applyAttachmentAnimations(sceneClip, {hatSlot}, /*isAnimationEditingEnabled=*/true, 0.0f);
+    const auto it = resolved.find("hat");
+    UM_CHECK(it != resolved.end());
+    UM_CHECK(!it->second.has_value());
+}
+
+static void testApplyAttachmentAnimationsEmptyWhenNotAnimating() {
+    SceneImage hatSlot;
+    hatSlot.slotName = "hat";
+    AnimationClip sceneClip("Scene");
+    sceneClip.upsertKeyframe(
+        SlotAnimationTarget::id("hat"), AnimationTrackProperty::Attachment, 0,
+        AttachmentValue{Uuid::generate()});
+
+    const auto resolved =
+        applyAttachmentAnimations(sceneClip, {hatSlot}, /*isAnimationEditingEnabled=*/false, 0.0f);
+    UM_CHECK(resolved.empty());
+}
+
+static void testApplySetupPoseRestoresBoneFromBaseWhenNotPosing() {
+    Skeleton skeleton;
+    Bone bone = makeBone(Vec2(10, 20), 0.4f);
+    bone.localTransform.position = Vec3(999, 999, 0); // Drifted away from base.
+    bone.localTransform.rotation.z = 1.5f;
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+
+    std::vector<SceneImage> images;
+    std::unordered_map<Uuid, float, UuidHash> lastRotation;
+    WorldMatrices matrices;
+
+    applySetupPose(skeleton, images, /*isPoseMode=*/false, 0.0f, matrices, lastRotation);
+
+    const Bone& restored = *skeleton.bone(bone.id);
+    UM_CHECK_NEAR(restored.localTransform.position.x, 10.0, 1e-4);
+    UM_CHECK_NEAR(restored.localTransform.position.y, 20.0, 1e-4);
+    UM_CHECK_NEAR(restored.localTransform.rotation.z, 0.4, 1e-4);
+}
+
+static void testApplySetupPosePreservesLocalTransformWhilePosing() {
+    Skeleton skeleton;
+    Bone bone = makeBone(Vec2(10, 20), 0.4f);
+    bone.localTransform.position = Vec3(999, 999, 0); // The pose an artist just posed.
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+
+    std::vector<SceneImage> images;
+    std::unordered_map<Uuid, float, UuidHash> lastRotation;
+    WorldMatrices matrices;
+
+    applySetupPose(skeleton, images, /*isPoseMode=*/true, 0.0f, matrices, lastRotation);
+
+    // Pose mode owns localTransform -- must be left exactly as posed.
+    UM_CHECK_NEAR(skeleton.bone(bone.id)->localTransform.position.x, 999.0, 1e-3);
+}
+
+static void testApplySetupPoseRestoresSpriteFromBasePoseAndClearsDeform() {
+    Skeleton skeleton;
+    SceneImage image;
+    image.id = Uuid::generate();
+    image.animationClip = AnimationClip("sprite");
+    image.basePosition = Vec2(5, 6);
+    image.baseScale = Vec2(2, 2);
+    image.baseRotation = 0.25f;
+    image.position = Vec2(999, 999); // Left over from a previous animated frame.
+    image.meshAnimationDeform = std::vector<Vec2>{Vec2(1, 1)};
+    std::vector<SceneImage> images{image};
+
+    std::unordered_map<Uuid, float, UuidHash> lastRotation;
+    WorldMatrices matrices;
+    applySetupPose(skeleton, images, false, 0.0f, matrices, lastRotation);
+
+    UM_CHECK_NEAR(images[0].position.x, 5.0, 1e-4);
+    UM_CHECK_NEAR(images[0].position.y, 6.0, 1e-4);
+    UM_CHECK_NEAR(images[0].scale.x, 2.0, 1e-4);
+    UM_CHECK_NEAR(images[0].rotation, 0.25, 1e-4);
+    UM_CHECK(!images[0].meshAnimationDeform.has_value());
+}
+
 UM_TEST_MAIN_BEGIN()
     testUnanimatedBoneKeepsBasePose();
     testAnimatedBoneSamplesTranslateTrack();
@@ -277,4 +429,13 @@ UM_TEST_MAIN_BEGIN()
     testApplyConstraintAnimationsSetupModeRestoresAuthoredValue();
     testApplyConstraintAnimationsAnimateModeSamplesClip();
     testApplyConstraintAnimationsNoOpWhenNothingAnimated();
+    testApplyDrawOrderAnimationReturnsNulloptWhenNotAnimating();
+    testApplyDrawOrderAnimationReturnsKeyedOrder();
+    testSlotNamesInFirstAppearanceOrder();
+    testApplyAttachmentAnimationsResolvesKeyedSlotAndOmitsUnkeyed();
+    testApplyAttachmentAnimationsExplicitlyEmptySlot();
+    testApplyAttachmentAnimationsEmptyWhenNotAnimating();
+    testApplySetupPoseRestoresBoneFromBaseWhenNotPosing();
+    testApplySetupPosePreservesLocalTransformWhilePosing();
+    testApplySetupPoseRestoresSpriteFromBasePoseAndClearsDeform();
 UM_TEST_MAIN_END()

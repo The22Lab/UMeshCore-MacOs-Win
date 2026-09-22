@@ -29,16 +29,35 @@
 // skeleton copy while animating, or restores each animated property's
 // authored value from `constraintSetupValues` in Setup mode, so the
 // Setup/Animate toggle never permanently loses the authored value under an
-// animated one).
+// animated one), and `applyDrawOrderAnimation`/`applyAttachmentAnimations`/
+// `slotNames` (the scene-wide, stepped-interpolation tracks: which draw
+// order and which per-slot attachment are keyed at the playhead).
 //
-// Still to port into this file, in the order `applyAnimations` calls them:
-// `applyDrawOrderAnimation`, `applyAttachmentAnimations`, `applySetupPose`,
-// and the whole-scene `applyAnimations`/`solveRigPose` orchestrators
-// themselves -- see ROADMAP.md's Phase 2 status. `ToolManager`'s bone/
-// sprite mutators (`moveBoneRoot`, `setImagePosition`, ...) branch on
-// whether animation editing is enabled and either write straight to the
-// base pose or call `commitKeyframe` + re-run this pipeline, so they wait
-// on the rest of this file, not just this first piece.
+// Deliberate representation change for both: the Swift source writes its
+// answer into a `SceneManager` field (`animatedDrawOrder`/
+// `animatedAttachments`) and only when it differs from the previous value,
+// an `@Published`-change-notification optimization. Here both are plain
+// functions that return the answer directly -- change-detection, if a
+// caller wants it, is the caller's to do on the returned value, matching
+// this port's existing decision (see `Skeleton::worldMatrices()`'s comment)
+// that platform/UI-notification concerns live above this library, not in
+// it.
+//
+// `applySetupPose` is also here: restores every bone/sprite to its
+// authored base pose (skipped for bones while `isPoseMode`, since there the
+// artist is hand-posing `localTransform` directly and writing the base
+// values over it every interaction would be the exact bug this function
+// exists to prevent, just aimed at the wrong mode), then re-places bound
+// sprites via `applyBoneBindings` with `sampleClips=false` -- a bound
+// sprite's stored local pose IS the Setup-mode answer.
+//
+// Still to port into this file: the whole-scene `applyAnimations`/
+// `solveRigPose` orchestrators themselves -- see ROADMAP.md's Phase 2
+// status. `ToolManager`'s bone/sprite mutators (`moveBoneRoot`,
+// `setImagePosition`, ...) branch on whether animation editing is enabled
+// and either write straight to the base pose or call `commitKeyframe` +
+// re-run this pipeline, so they wait on the rest of this file, not just
+// this first piece.
 //
 // Deliberate divergence from the Swift source: `applyBoneBindings` there
 // reads bone world matrices from `SceneManager.frameWorldMatrices()`, a
@@ -53,6 +72,7 @@
 // unchanged; only where the once-per-frame memoization lives has moved.
 
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -148,5 +168,42 @@ void applyConstraintAnimations(
     Skeleton& skeleton, const AnimationClip& sceneAnimationClip,
     const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues,
     bool isAnimationEditingEnabled, float time);
+
+// The animated draw order at `time`, or nullopt when the draw order isn't
+// animated (no track for `SceneAnimationTarget::drawOrder()`, or Setup
+// mode) -- the caller substitutes the scene's authored/live order in that
+// case. Stepped by definition: the order is whatever the most recent key
+// at or before the playhead says.
+std::optional<std::vector<Uuid>> applyDrawOrderAnimation(
+    const AnimationClip& sceneAnimationClip, bool isAnimationEditingEnabled, float time);
+
+// Every slot name across `images`, in first-appearance order -- a vector,
+// not a set, since iterating a `std::unordered_set<std::string>` is not
+// stable between runs and a slot's row in the timeline must not move on
+// its own.
+std::vector<std::string> slotNames(const std::vector<SceneImage>& images);
+
+// Which attachment each keyed slot shows at `time`. A slot absent from the
+// result has no attachment track at all (the caller falls back to its
+// normal, non-animated attachment resolution for that slot); a slot
+// present but mapped to `std::nullopt` means its track explicitly resolves
+// to "show nothing" at this frame -- the same "key present vs. value
+// optional" double-optional shape `Skin::SlotAttachments` already uses.
+// Empty (Setup mode, or `isAnimationEditingEnabled` false) clears every
+// slot's animated attachment, matching the Swift source's "no mode guard
+// used to exist here" bugfix comment.
+std::unordered_map<std::string, std::optional<Uuid>> applyAttachmentAnimations(
+    const AnimationClip& sceneAnimationClip, const std::vector<SceneImage>& images,
+    bool isAnimationEditingEnabled, float time);
+
+// Restores every bone (unless `isPoseMode`) and every sprite to its
+// authored base pose, then re-places bound sprites on their bones via
+// `applyBoneBindings` (with `sampleClips=false` -- see this function's own
+// doc comment). `worldMatrices`/`lastBoundImageRotation` are threaded
+// straight through to that call; see `applyBoneBindings`'s doc comment for
+// what each means.
+void applySetupPose(
+    Skeleton& skeleton, std::vector<SceneImage>& images, bool isPoseMode, float time,
+    const WorldMatrices& worldMatrices, std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation);
 
 } // namespace umeshcore

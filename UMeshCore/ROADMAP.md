@@ -214,15 +214,30 @@ Special-case validation needs, carried over into each phase's own tests:
    animating; in Setup mode, restores each animated property's authored
    value from `constraintSetupValues` instead, so leaving Animate mode is
    non-destructive).
-   Remaining in `SceneAnimator`: `applyDrawOrderAnimation`,
-   `applyAttachmentAnimations`, `applySetupPose`,
-   `commitKeyframe`/`commitMeshDeformKeyframe`, and the whole-scene
-   `applyAnimations`/`solveRigPose` orchestrators. Then `ToolManager` + the 8
-   tools on top of all of it — each tool's manipulation math (drag deltas,
-   snap, axis constraint) is independent of this and could in principle be
-   ported sooner, but every tool's `onMouseDown`/`onMouseUp` writes through
-   one of the two `isAnimationEditingEnabled` branches above, so a tool
-   ported without them would be untestable against real behavior, not just
+   `applyDrawOrderAnimation`/`applyAttachmentAnimations`/`slotNames` (the
+   scene-wide, stepped-interpolation tracks) and `applySetupPose` are also
+   ported and tested now. Two deliberate representation changes, documented
+   in the header: (1) `applyDrawOrderAnimation`/`applyAttachmentAnimations`
+   return their answer directly instead of writing it into a `SceneManager`
+   field only when it differs from the previous value — that comparison is
+   an `@Published`-change-notification optimization in Swift, and change-
+   detection on the returned value, if a caller wants it, is the caller's to
+   do, per the same reasoning as `Skeleton::worldMatrices()`'s own
+   physics-stepping decision; (2) `applyAttachmentAnimations`'s per-slot
+   result reuses `Skin::SlotAttachments`'s existing "key present vs. value
+   optional" double-optional shape (`unordered_map<string,
+   optional<Uuid>>`) for the same reason Swift's `[String: UUID?]` needs it:
+   a slot absent from the map has no attachment track at all, while a slot
+   present but mapped to `nullopt` means its track explicitly resolves to
+   "show nothing" this frame — two different facts, not one.
+   Remaining in `SceneAnimator`: `commitKeyframe`/`commitMeshDeformKeyframe`
+   and the whole-scene `applyAnimations`/`solveRigPose` orchestrators that
+   tie every piece above together. Then `ToolManager` + the 8 tools on top
+   of all of it — each tool's manipulation math (drag deltas, snap, axis
+   constraint) is independent of this and could in principle be ported
+   sooner, but every tool's `onMouseDown`/`onMouseUp` writes through one of
+   the two `isAnimationEditingEnabled` branches above, so a tool ported
+   without them would be untestable against real behavior, not just
    incomplete.
 3. **Serialization** — binary UMSH chunked format (byte-exact; the
    `.meshDeform` empty-payload gap in the current Swift writer needs an

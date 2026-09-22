@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 #include "umeshcore/Math/MatrixUtilities.h"
 
@@ -282,6 +283,76 @@ void applyConstraintAnimations(
         }
     }
     if (didWrite) skeleton = std::move(working);
+}
+
+std::optional<std::vector<Uuid>> applyDrawOrderAnimation(
+    const AnimationClip& sceneAnimationClip, bool isAnimationEditingEnabled, float time) {
+    if (!isAnimationEditingEnabled) return std::nullopt;
+    if (!sceneAnimationClip.hasTrack(SceneAnimationTarget::drawOrder(), AnimationTrackProperty::DrawOrder)) {
+        return std::nullopt;
+    }
+    return sceneAnimationClip.evaluatedDrawOrderAtTime(time);
+}
+
+std::vector<std::string> slotNames(const std::vector<SceneImage>& images) {
+    std::vector<std::string> out;
+    std::unordered_set<std::string> seen;
+    for (const SceneImage& image : images) {
+        const std::string name = image.effectiveSlotName();
+        if (seen.insert(name).second) out.push_back(name);
+    }
+    return out;
+}
+
+std::unordered_map<std::string, std::optional<Uuid>> applyAttachmentAnimations(
+    const AnimationClip& sceneAnimationClip, const std::vector<SceneImage>& images,
+    bool isAnimationEditingEnabled, float time) {
+    std::unordered_map<std::string, std::optional<Uuid>> resolved;
+    if (!isAnimationEditingEnabled) return resolved;
+
+    for (const std::string& slotName : slotNames(images)) {
+        const Uuid target = SlotAnimationTarget::id(slotName);
+        if (!sceneAnimationClip.hasTrack(target, AnimationTrackProperty::Attachment)) continue;
+
+        const auto& keys = sceneAnimationClip.keyframesFor(target, AnimationTrackProperty::Attachment);
+        const KeyframeSpan span = AnimationClip::keyframeSpan(keys, time);
+        const std::optional<std::size_t> index = span.exact.has_value() ? span.exact : span.previous;
+        if (!index.has_value()) continue;
+        const auto* attachment = std::get_if<AttachmentValue>(&keys[*index].value);
+        if (attachment == nullptr) continue;
+        resolved[slotName] = attachment->value;
+    }
+    return resolved;
+}
+
+void applySetupPose(
+    Skeleton& skeleton, std::vector<SceneImage>& images, bool isPoseMode, float time,
+    const WorldMatrices& worldMatrices, std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation) {
+    if (!isPoseMode) {
+        auto restoredBones = skeleton.bones();
+        for (auto& entry : restoredBones) {
+            Bone& bone = entry.second;
+            bone.localTransform.position.x = bone.baseTransform.position.x;
+            bone.localTransform.position.y = bone.baseTransform.position.y;
+            bone.localTransform.scale.x = bone.baseTransform.scale.x;
+            bone.localTransform.scale.y = bone.baseTransform.scale.y;
+            bone.localTransform.rotation.z = bone.baseTransform.rotation.z;
+            bone.localTransform.skew = bone.baseTransform.skew;
+        }
+        skeleton.setBones(std::move(restoredBones));
+    }
+
+    for (SceneImage& image : images) {
+        const SceneImageAnimationPose base =
+            image.boneBinding.has_value() ? image.boneBinding->localPose() : image.basePose();
+        image.position = base.position;
+        image.scale = base.scale;
+        image.rotation = base.rotation;
+        image.rotation3D = image.baseRotation3D;
+        image.skew = base.skew;
+        image.meshAnimationDeform = std::nullopt;
+    }
+    applyBoneBindings(images, worldMatrices, time, /*sampleClips=*/false, lastBoundImageRotation);
 }
 
 } // namespace umeshcore
