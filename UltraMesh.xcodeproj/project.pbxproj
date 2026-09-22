@@ -43,6 +43,13 @@
 			);
 			target = 8C4F68AA2F7C6FBC00BBE817 /* UltraMesh */;
 		};
+		8CC0DE022F7C6FBC00BBE817 /* Exceptions for "UMeshCore/src" folder in "UltraMesh" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				CMakeLists.txt,
+			);
+			target = 8C4F68AA2F7C6FBC00BBE817 /* UltraMesh */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -62,6 +69,14 @@
 		8C4F68C52F7C6FBE00BBE817 /* UltraMesh 2d animationUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "UltraMesh 2d animationUITests";
+			sourceTree = "<group>";
+		};
+		8CC0DE012F7C6FBC00BBE817 /* UMeshCore/src */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				8CC0DE022F7C6FBC00BBE817 /* Exceptions for "UMeshCore/src" folder in "UltraMesh" target */,
+			);
+			path = UMeshCore/src;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -142,6 +157,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				8C4F68AD2F7C6FBC00BBE817 /* UltraMesh 2d animation */,
+				8CC0DE012F7C6FBC00BBE817 /* UMeshCore/src */,
 			);
 			name = UltraMesh;
 			packageProductDependencies = (
@@ -310,6 +326,10 @@
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/UMeshCore/include",
+				);
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
@@ -364,6 +384,11 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/UMeshCore/include",
+				);
+				SWIFT_OBJC_INTEROP_MODE = objcxx;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
@@ -376,6 +401,10 @@
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/UMeshCore/include",
+				);
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
@@ -423,6 +452,11 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/UMeshCore/include",
+				);
+				SWIFT_OBJC_INTEROP_MODE = objcxx;
 			};
 			name = Release;
 		};
