@@ -6,6 +6,7 @@
 // this file's own output.
 
 #include "umeshcore/Animation/SceneAnimator.h"
+#include "umeshcore/Constraints/ConstraintAnimation.h"
 #include "umeshcore/Math/MatrixUtilities.h"
 #include "TestHarness.h"
 
@@ -172,6 +173,97 @@ static void testEnsureImageAnimationSpaceConsistencyConvertsBaseValues() {
     UM_CHECK_NEAR(image.basePosition.x, 0.0, 1e-3);
 }
 
+static void testConstraintSampledSkeletonInterpolatesScalarTrack() {
+    Skeleton skeleton;
+    IKConstraint ik;
+    ik.mix_ = 1.0f; // Overwritten by the sample -- not read since a track exists.
+    skeleton.ikConstraints.push_back(ik);
+
+    AnimationClip sceneClip("Scene");
+    sceneClip.upsertKeyframe(ik.id_, AnimationTrackProperty::ConstraintMix, /*frame=*/0, ScalarValue{0.2f});
+    sceneClip.upsertKeyframe(ik.id_, AnimationTrackProperty::ConstraintMix, /*frame=*/10, ScalarValue{0.8f});
+
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+    const ConstraintSampleResult result =
+        constraintSampledSkeleton(skeleton, sceneClip, setupValues, /*time=*/5.0f);
+
+    UM_CHECK(result.didChange);
+    UM_CHECK_NEAR(result.skeleton.ikConstraints[0].mix_, 0.5, 1e-3);
+    // The base skeleton passed in is never mutated -- only the copy.
+    UM_CHECK_NEAR(skeleton.ikConstraints[0].mix_, 1.0, 1e-5);
+}
+
+static void testConstraintSampledSkeletonOnlyWritesTrackedProperties() {
+    // A constraint with ONE animated property (ConstraintMix) still owns
+    // several animatable properties (see `animatableProperties`). Only the
+    // one with an actual track gets sampled and written; the rest -- here
+    // PathRotateMix, which has no track -- must be left at their live value.
+    Skeleton skeleton;
+    PathConstraint path;
+    path.rotateMix = 0.11f;
+    skeleton.pathConstraints.push_back(path);
+
+    AnimationClip sceneClip("Scene");
+    sceneClip.upsertKeyframe(path.id_, AnimationTrackProperty::ConstraintMix, /*frame=*/0, ScalarValue{1.0f});
+
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+    const ConstraintSampleResult result =
+        constraintSampledSkeleton(skeleton, sceneClip, setupValues, /*time=*/0.0f);
+    UM_CHECK_NEAR(result.skeleton.pathConstraints[0].rotateMix, 0.11, 1e-4);
+    UM_CHECK_NEAR(result.skeleton.pathConstraints[0].mix_, 1.0, 1e-3);
+}
+
+static void testApplyConstraintAnimationsSetupModeRestoresAuthoredValue() {
+    Skeleton skeleton;
+    TransformConstraint transform;
+    // Animation left the mix at some sampled value; Setup mode must restore
+    // the authored one below, not leave this in place.
+    transform.mix_ = 0.9f;
+    skeleton.transformConstraints.push_back(transform);
+
+    AnimationClip sceneClip("Scene");
+    sceneClip.upsertKeyframe(
+        transform.id_, AnimationTrackProperty::ConstraintMix, /*frame=*/0, ScalarValue{0.3f});
+
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+    ConstraintSetupValues setup;
+    setup.set(AnimationTrackProperty::ConstraintMix, 0.42f);
+    setupValues[transform.id_] = setup;
+
+    applyConstraintAnimations(
+        skeleton, sceneClip, setupValues, /*isAnimationEditingEnabled=*/false, /*time=*/0.0f);
+    UM_CHECK_NEAR(skeleton.transformConstraints[0].mix_, 0.42, 1e-4);
+}
+
+static void testApplyConstraintAnimationsAnimateModeSamplesClip() {
+    Skeleton skeleton;
+    IKConstraint ik;
+    skeleton.ikConstraints.push_back(ik);
+
+    AnimationClip sceneClip("Scene");
+    sceneClip.upsertKeyframe(ik.id_, AnimationTrackProperty::ConstraintMix, /*frame=*/0, ScalarValue{0.0f});
+    sceneClip.upsertKeyframe(ik.id_, AnimationTrackProperty::ConstraintMix, /*frame=*/10, ScalarValue{1.0f});
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+
+    applyConstraintAnimations(
+        skeleton, sceneClip, setupValues, /*isAnimationEditingEnabled=*/true, /*time=*/10.0f);
+    UM_CHECK_NEAR(skeleton.ikConstraints[0].mix_, 1.0, 1e-3);
+}
+
+static void testApplyConstraintAnimationsNoOpWhenNothingAnimated() {
+    Skeleton skeleton;
+    IKConstraint ik;
+    ik.mix_ = 0.55f;
+    skeleton.ikConstraints.push_back(ik);
+
+    AnimationClip sceneClip("Scene"); // No tracks at all.
+    std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> setupValues;
+
+    applyConstraintAnimations(skeleton, sceneClip, setupValues, true, 3.0f);
+    applyConstraintAnimations(skeleton, sceneClip, setupValues, false, 3.0f);
+    UM_CHECK_NEAR(skeleton.ikConstraints[0].mix_, 0.55, 1e-5);
+}
+
 UM_TEST_MAIN_BEGIN()
     testUnanimatedBoneKeepsBasePose();
     testAnimatedBoneSamplesTranslateTrack();
@@ -180,4 +272,9 @@ UM_TEST_MAIN_BEGIN()
     testApplyBoneBindingsUnwrapsRotationAcrossWrap();
     testApplyBoneBindingsClearsContinuityWhenNothingIsBound();
     testEnsureImageAnimationSpaceConsistencyConvertsBaseValues();
+    testConstraintSampledSkeletonInterpolatesScalarTrack();
+    testConstraintSampledSkeletonOnlyWritesTrackedProperties();
+    testApplyConstraintAnimationsSetupModeRestoresAuthoredValue();
+    testApplyConstraintAnimationsAnimateModeSamplesClip();
+    testApplyConstraintAnimationsNoOpWhenNothingAnimated();
 UM_TEST_MAIN_END()

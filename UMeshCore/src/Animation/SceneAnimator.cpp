@@ -160,4 +160,128 @@ void applyBoneBindings(
     }
 }
 
+ConstraintSampleResult constraintSampledSkeleton(
+    const Skeleton& base, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues, float time) {
+    ConstraintSampleResult result;
+    result.skeleton = base;
+    Skeleton& working = result.skeleton;
+
+    const auto animatedIDs = sceneAnimationClip.animatedTargetIDs();
+    for (Uuid constraintID : animatedIDs) {
+        if (constraintID == SceneAnimationTarget::drawOrder()) continue;
+        if (!constraintKind(working, constraintID).has_value()) continue;
+
+        const ConstraintSetupValues* setup = nullptr;
+        if (auto it = constraintSetupValues.find(constraintID); it != constraintSetupValues.end()) {
+            setup = &it->second;
+        }
+
+        for (AnimationTrackProperty property : animatableProperties(working, constraintID)) {
+            if (!sceneAnimationClip.hasTrack(constraintID, property)) continue;
+            result.didChange = true;
+
+            switch (valueKind(property)) {
+                case TrackValueKind::Scalar: {
+                    float fallback;
+                    if (setup && setup->scalar(property).has_value()) {
+                        fallback = *setup->scalar(property);
+                    } else if (auto live = constraintScalar(working, constraintID, property)) {
+                        fallback = *live;
+                    } else {
+                        fallback = neutralValue(property);
+                    }
+                    const float sampled =
+                        sceneAnimationClip.evaluatedScalarAtTime(constraintID, property, time, fallback);
+                    setConstraintScalar(working, constraintID, property, clamped(property, sampled));
+                    break;
+                }
+                case TrackValueKind::Flag: {
+                    bool fallback;
+                    if (setup && setup->flag(property).has_value()) {
+                        fallback = *setup->flag(property);
+                    } else if (auto live = constraintFlag(working, constraintID, property)) {
+                        fallback = *live;
+                    } else {
+                        fallback = false;
+                    }
+                    const bool sampled =
+                        sceneAnimationClip.evaluatedFlagAtTime(constraintID, property, time, fallback);
+                    setConstraintFlag(working, constraintID, property, sampled);
+                    break;
+                }
+                case TrackValueKind::Vector2: {
+                    Vec2 fallback;
+                    if (setup && setup->vector(property).has_value()) {
+                        fallback = *setup->vector(property);
+                    } else if (auto live = constraintVector(working, constraintID, property)) {
+                        fallback = *live;
+                    } else {
+                        fallback = Vec2::zero();
+                    }
+                    const Vec2 sampled =
+                        sceneAnimationClip.evaluatedVector2AtTime(constraintID, property, time, fallback);
+                    setConstraintVector(working, constraintID, property, sampled);
+                    break;
+                }
+                case TrackValueKind::Deform:
+                case TrackValueKind::DrawOrder:
+                case TrackValueKind::Event:
+                case TrackValueKind::Attachment:
+                    break;
+            }
+        }
+    }
+    return result;
+}
+
+void applyConstraintAnimations(
+    Skeleton& skeleton, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues,
+    bool isAnimationEditingEnabled, float time) {
+    const auto animatedIDs = sceneAnimationClip.animatedTargetIDs();
+    if (animatedIDs.empty()) return;
+
+    if (isAnimationEditingEnabled) {
+        ConstraintSampleResult sampled =
+            constraintSampledSkeleton(skeleton, sceneAnimationClip, constraintSetupValues, time);
+        if (sampled.didChange) skeleton = std::move(sampled.skeleton);
+        return;
+    }
+
+    // Setup mode: show the authored value on every animated property, so
+    // the Setup/Animate toggle behaves the way this class of editor's does.
+    Skeleton working = skeleton;
+    bool didWrite = false;
+    for (Uuid constraintID : animatedIDs) {
+        if (constraintID == SceneAnimationTarget::drawOrder()) continue;
+        if (!constraintKind(working, constraintID).has_value()) continue;
+        const auto setupIt = constraintSetupValues.find(constraintID);
+        if (setupIt == constraintSetupValues.end()) continue;
+        const ConstraintSetupValues& setup = setupIt->second;
+
+        for (AnimationTrackProperty property : animatableProperties(working, constraintID)) {
+            if (!sceneAnimationClip.hasTrack(constraintID, property)) continue;
+            didWrite = true;
+            switch (valueKind(property)) {
+                case TrackValueKind::Scalar:
+                    if (auto v = setup.scalar(property)) setConstraintScalar(working, constraintID, property, *v);
+                    break;
+                case TrackValueKind::Flag:
+                    if (auto v = setup.flag(property)) setConstraintFlag(working, constraintID, property, *v);
+                    break;
+                case TrackValueKind::Vector2:
+                    if (auto v = setup.vector(property)) setConstraintVector(working, constraintID, property, *v);
+                    break;
+                case TrackValueKind::Deform:
+                case TrackValueKind::DrawOrder:
+                case TrackValueKind::Event:
+                case TrackValueKind::Attachment:
+                    break;
+            }
+        }
+    }
+    if (didWrite) skeleton = std::move(working);
+}
+
 } // namespace umeshcore

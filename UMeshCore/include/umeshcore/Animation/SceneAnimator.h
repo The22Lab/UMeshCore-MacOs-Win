@@ -24,15 +24,21 @@
 // values and every translate/rotate keyframe when the binding changes so a
 // bind/unbind never moves the sprite on screen).
 //
+// Now also carries `constraintSampledSkeleton`/`applyConstraintAnimations`
+// (samples `sceneAnimationClip`'s constraint-property tracks onto a
+// skeleton copy while animating, or restores each animated property's
+// authored value from `constraintSetupValues` in Setup mode, so the
+// Setup/Animate toggle never permanently loses the authored value under an
+// animated one).
+//
 // Still to port into this file, in the order `applyAnimations` calls them:
-// `applyConstraintAnimations`, `applyDrawOrderAnimation`,
-// `applyAttachmentAnimations`, `applySetupPose`, and the whole-scene
-// `applyAnimations`/`solveRigPose` orchestrators themselves -- see
-// ROADMAP.md's Phase 2 status. `ToolManager`'s bone/sprite mutators
-// (`moveBoneRoot`, `setImagePosition`, ...) branch on whether animation
-// editing is enabled and either write straight to the base pose or call
-// `commitKeyframe` + re-run this pipeline, so they wait on the rest of this
-// file, not just this first piece.
+// `applyDrawOrderAnimation`, `applyAttachmentAnimations`, `applySetupPose`,
+// and the whole-scene `applyAnimations`/`solveRigPose` orchestrators
+// themselves -- see ROADMAP.md's Phase 2 status. `ToolManager`'s bone/
+// sprite mutators (`moveBoneRoot`, `setImagePosition`, ...) branch on
+// whether animation editing is enabled and either write straight to the
+// base pose or call `commitKeyframe` + re-run this pipeline, so they wait
+// on the rest of this file, not just this first piece.
 //
 // Deliberate divergence from the Swift source: `applyBoneBindings` there
 // reads bone world matrices from `SceneManager.frameWorldMatrices()`, a
@@ -52,6 +58,7 @@
 
 #include "umeshcore/Animation/AnimationClip.h"
 #include "umeshcore/Constraints/Constraint.h"
+#include "umeshcore/Constraints/ConstraintAnimation.h"
 #include "umeshcore/Core/Uuid.h"
 #include "umeshcore/Math/Vec.h"
 #include "umeshcore/Model/Bone.h"
@@ -112,5 +119,34 @@ SceneImageAnimationPose boundImagePose(
 void applyBoneBindings(
     std::vector<SceneImage>& bound, const WorldMatrices& worldMatrices, float time,
     bool sampleClips, std::unordered_map<Uuid, float, UuidHash>& lastBoundImageRotation);
+
+struct ConstraintSampleResult {
+    Skeleton skeleton;
+    // Whether any track actually wrote a value -- callers use this to avoid
+    // replacing the skeleton (and whatever change-notification that would
+    // trigger, on a platform layer above this one) when nothing changed.
+    bool didChange = false;
+};
+
+// Constraint tracks sampled at `time`, onto a copy of `base`. Reads
+// `sceneAnimationClip` and `constraintSetupValues`; mutates neither. Shared
+// by the live per-frame path (`applyConstraintAnimations`, in Animate mode)
+// and by a Scene-compositing instance's point sampling (Phase 5), so both
+// sample constraints through the exact same code.
+ConstraintSampleResult constraintSampledSkeleton(
+    const Skeleton& base, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues, float time);
+
+// Pushes the current frame's constraint values onto `skeleton` in place. In
+// Animate mode (`isAnimationEditingEnabled`), delegates to
+// `constraintSampledSkeleton` and replaces `skeleton` only if it produced a
+// change. In Setup mode, restores each animated property's authored value
+// from `constraintSetupValues` instead, so leaving Animate mode is
+// non-destructive -- the same rule `applySetupPose` applies to bones and
+// sprites, here for constraints.
+void applyConstraintAnimations(
+    Skeleton& skeleton, const AnimationClip& sceneAnimationClip,
+    const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& constraintSetupValues,
+    bool isAnimationEditingEnabled, float time);
 
 } // namespace umeshcore

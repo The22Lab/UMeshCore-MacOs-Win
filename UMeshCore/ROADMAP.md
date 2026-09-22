@@ -191,13 +191,31 @@ Special-case validation needs, carried over into each phase's own tests:
    `Skeleton::worldMatrices()`), so this file has no per-frame cache/token
    state of its own — behavior is unchanged, only where that memoization
    would live has moved to whatever eventually plays SceneManager's role.
-   Remaining in this file: `applyConstraintAnimations`/
-   `constraintSampledSkeleton` (needs `constraintSetupValues`, the
-   authored-vs-animated constraint value bookkeeping from
-   `Data/ConstraintAnimation.swift` — not ported, and itself needs new
-   `Skeleton` methods to get/set a constraint's scalar/flag/vector
-   properties by `AnimationTrackProperty`, which don't exist yet either),
-   `applyDrawOrderAnimation`, `applyAttachmentAnimations`, `applySetupPose`,
+   `Data/ConstraintAnimation.swift` (the authored-vs-animated constraint
+   value bookkeeping `applyConstraintAnimations` needed) is now ported too,
+   as `Constraints/ConstraintAnimation.h/.cpp`: `ConstraintKind`,
+   `ConstraintSetupValues`, and generic (kind-agnostic) scalar/flag/vector
+   get/set access to any of the four constraint stores by
+   `AnimationTrackProperty` (`constraintScalar`/`setConstraintScalar`, etc.,
+   `captureConstraintSetupValues`/`applyConstraintSetupValues`). Modeled as
+   free functions taking `Skeleton&` rather than as `Skeleton` methods (the
+   Swift source's `extension Skeleton` is effectively the same API surface),
+   matching this port's existing pattern of keeping cross-subsystem
+   orchestration out of the core data types. One deliberate representation
+   change, documented in the header: `ConstraintSetupValues`'s three maps
+   are keyed directly by the `AnimationTrackProperty` enum instead of by its
+   Swift `rawValue` string — `std::unordered_map` hashes a scoped enum out
+   of the box, and going through a string would mean hand-maintaining a
+   rawValue table that exists nowhere else in this port, for a dictionary
+   key spelling nothing here serializes or otherwise depends on.
+   `SceneAnimator` now also has `constraintSampledSkeleton`/
+   `applyConstraintAnimations` built on top of it (samples the scene-wide
+   animation clip's constraint-property tracks onto a skeleton copy while
+   animating; in Setup mode, restores each animated property's authored
+   value from `constraintSetupValues` instead, so leaving Animate mode is
+   non-destructive).
+   Remaining in `SceneAnimator`: `applyDrawOrderAnimation`,
+   `applyAttachmentAnimations`, `applySetupPose`,
    `commitKeyframe`/`commitMeshDeformKeyframe`, and the whole-scene
    `applyAnimations`/`solveRigPose` orchestrators. Then `ToolManager` + the 8
    tools on top of all of it — each tool's manipulation math (drag deltas,

@@ -15,6 +15,7 @@ add_library(umeshcore STATIC
     Constraints/PathSolver.cpp
     Constraints/TransformConstraintSolver.cpp
     Constraints/PhysicsConstraintSystem.cpp
+    Constraints/ConstraintAnimation.cpp
     Mesh/MeshKernel.cpp
     Mesh/MeshValidator.cpp
     Mesh/Mesh.cpp

@@ -8,7 +8,9 @@
 // Mac/Windows-native UI chrome, and belong with Phase 6's platform-side
 // panel wiring, not the portable core.
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 
 namespace umeshcore {
@@ -302,6 +304,37 @@ inline const std::array<AnimationTrackProperty, 10>& lightProperties() {
         AnimationTrackProperty::LightAngles, AnimationTrackProperty::LightColorR,
         AnimationTrackProperty::LightColorG, AnimationTrackProperty::LightColorB};
     return v;
+}
+
+// Clamp a raw value into `p`'s legal range. Applied on every write path,
+// animated or manual, so an over-shooting Bezier curve can never push a mix
+// outside 0..1 and destabilise the solver.
+inline float clamped(AnimationTrackProperty p, float value) {
+    const auto range = valueRange(p);
+    if (!range.has_value()) return value;
+    if (std::isnan(value)) return range->low;
+    return std::min(std::max(value, range->low), range->high);
+}
+
+// A sensible neutral value used when a property has no setup record yet.
+inline float neutralValue(AnimationTrackProperty p) {
+    using P = AnimationTrackProperty;
+    switch (p) {
+        case P::ConstraintMix:
+        case P::TransformRotateMix:
+        case P::TransformTranslateMix:
+        case P::TransformScaleMix:
+        case P::TransformShearMix:
+        case P::PathPositionMix:
+        case P::PathRotateMix:
+            return 1.0f;
+        case P::PhysicsMass:
+            return 1.0f;
+        case P::PhysicsDamping:
+            return 0.88f;
+        default:
+            return 0.0f;
+    }
 }
 
 } // namespace umeshcore
