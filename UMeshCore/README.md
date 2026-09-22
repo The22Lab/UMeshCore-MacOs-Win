@@ -60,12 +60,12 @@ explicitly in `ROADMAP.md` §2 as follow-up work for whoever has Xcode access.
 
 ## Status
 
-**See `STATUS.md`** — the scannable summary of where each phase stands,
-what is still pending and why, and where to find the Swift reference for
-each remaining piece.
+**See `../CLAUDE.md`** — the map: where each phase stands, what is still
+pending and why, the Swift reference for every remaining piece, and the
+four conventions this port holds to.
 
 `ROADMAP.md` is the detailed running record: it grows with every increment
-and explains each decision and divergence at length. `STATUS.md` is the
+and explains each decision and divergence at length. `CLAUDE.md` is the
 map; `ROADMAP.md` is the territory.
 
 In short, at the time of writing: Phases 0-3 are complete except for work
