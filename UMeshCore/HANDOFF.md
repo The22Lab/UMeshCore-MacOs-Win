@@ -98,30 +98,25 @@ hay que resolverlo; antes, no hace falta.
 
 ## Por dónde seguir: Fase 5
 
-Todo `Data/Scene/`. El orden que yo seguiría, por dependencias reales y no
-por tamaño:
+**Pasos 1-3 y 5a hechos** (ver `../CLAUDE.md` § Fase 5): el modelo está
+portado — `SceneLayer`, `SceneComposition`, `SceneCamera`, `SceneMaterial`,
+el modelo de `SceneLight`, y los adaptadores que cierran
+`cardCorners`/`cardPoint` y los dos constructores de conveniencia de
+`SceneProjection`. Quedan, en este orden:
 
-1. **`SceneLayer.swift` (282)** primero, con `SceneComposition.swift` (241).
-   Es lo que desbloquea más cosas ya escritas: `cardCorners`/`cardPoint` de
-   `SceneViewCamera` esperan su `planePoint`/`liftToWorld`/`worldOrigin`, y
-   `SceneLayerUniforms` espera su `orientation()` (ortonormal, sin escala ni
-   shear — el header dice por qué, y ya hay un gizmo que se torció por
-   saltárselo).
-2. **`SceneLight.swift` (390)** — solo el **modelo**. La matemática ya está
-   en `Render/SceneLighting.h`, y los enums del modelo deben mapearse a
-   `SceneLightKind`/`SceneLightBlend` con `switch` explícito, nunca cast:
-   son `String`-backed para el formato de archivo.
-3. **`SceneCamera.swift`** — cierra los dos constructores de conveniencia
-   de `SceneProjection` (`init(camera:)` / `init(shot:)`), que hoy son
-   one-liners esperando el tipo.
-4. **`ScenePersistence.swift`** — cierra `writeScenesChunk` y saca de
+1. **`ScenePersistence.swift` (463)** — cierra `writeScenesChunk` y saca de
    `ProjectDocument::unrecognized` las secciones de Scene. Ojo: el test de
    punta a punta de `unrecognized` debe seguir pasando para lo que *siga*
    sin modelarse.
-5. `SceneMaterial`, `ScenePlayback`, `SceneSelection`, y después
-   `PhysicsPreviewTool` (Fase 2) — que solo necesita que `EditorScene`
-   tenga una instancia viva de `PhysicsConstraintSystem`.
-6. `Export/ExportManager.swift` (135) + `ExportSettings.swift`.
+2. **`ScenePlayback.swift` (105)** y **`SceneSelection.swift` (47)**.
+3. **El muestreo por frame.** `SceneComposition` NO tiene atajo `lighting()`
+   a propósito — el Swift registra que existió un commit y era una trampa:
+   construía la iluminación de las luces *autoradas*, así que cualquiera que
+   usara la propiedad obvia renderizaba una escena cuyas pistas de luz no
+   hacían nada. El muestreo vive en `SceneManager`; inyecta lo necesario.
+4. **`PhysicsPreviewTool`** (Fase 2) — solo necesita que `EditorScene` tenga
+   una instancia viva de `PhysicsConstraintSystem`.
+5. `Export/ExportManager.swift` (135) + `ExportSettings.swift`.
 
 Y la deuda que sigue ahí (Riesgo #6): de `SceneGizmoOverlay.swift` ya salió
 `ringFrame` y las constantes de geometría; lo que **construye** un layout

@@ -47,7 +47,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-41 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+42 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -108,7 +108,7 @@ errores reales.
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
 | 4 | Capa de geometría de render compartida | ✅ Completa (1 pieza descartada: código muerto) |
-| **5** | **Scene compositing, luces, física secundaria, export** | **⬜ Siguiente** |
+| **5** | **Scene compositing, luces, física secundaria, export** | **🔨 En curso — modelo portado** |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
 
@@ -247,9 +247,11 @@ centro de la pantalla". Aquí hay una sola: `cameraBasis`, ya en
 `SceneProjection.h`. El test que lo cubre es exactamente ese: el pivote se
 queda en el centro exacto tras dieciséis órbitas.
 
-No portado: `cardCorners`/`cardPoint` — toman un `SceneLayer` y llaman a su
-`liftToWorld`; eso es Fase 5, e inventar el tipo ahora obligaría a
-re-transcribir ese lift, el fallo que el propio archivo advierte.
+`cardCorners`/`cardPoint` ya no están pendientes: viven en
+`Model/Scene/SceneRenderAdapters.h` (Fase 5), del lado del modelo. La
+dirección importa — Render no conoce el modelo, el modelo conoce a Render —
+porque el scoping de la Fase 4 existía justo para que un backend de Metal o
+DirectX pudiera consumir la matemática sin arrastrar el compositing detrás.
 
 **`Render/SceneGPUTypes.h`** ← `Render/SceneGPU/SceneGPUTypes.swift` (278 L).
 Los structs POD que lee el shader, byte a byte. 8 tests.
@@ -522,22 +524,59 @@ Si aparecen en otra copia del proyecto, traerlos seguiría siendo valioso.
 
 ---
 
-## Fase 5 — de dónde partir cuando llegue
+## Fase 5 — en curso
 
-Todo el namespace de Scene compositing, en `Data/Scene/`. Ninguno tiene
-equivalente en UMeshCore: `SceneComposition.swift` (241),
-`SceneLayer.swift` (282), `SceneLight.swift` (390), `SceneCamera.swift`,
-`SceneMaterial.swift`, `ScenePersistence.swift`, `ScenePlayback.swift`,
-`SceneSelection.swift`.
+Todo el namespace de Scene compositing, en `Data/Scene/` (1825 L).
 
-Portarlos cierra de golpe cuatro pendientes: el chunk SCENES, las secciones
-de manifiesto que hoy viven en `unrecognized`, los dos constructores de
-conveniencia de `SceneProjection`, `cardCorners`/`cardPoint` de la cámara
-de vuelo, y `PhysicsPreviewTool`.
+### Hecho — el modelo
 
-Export: `Export/ExportManager.swift` (135) + `Export/ExportSettings.swift`.
+**`Model/Scene/`** ← `SceneLayer.swift` (282) + `SceneComposition.swift`
+(241, menos `SceneViewCamera` que ya estaba) + `SceneCamera.swift` (59) +
+`SceneMaterial.swift` (238) + la mitad de modelo de `SceneLight.swift`.
+16 tests.
 
----
+- `SceneMaterial.h` — relieve, wrap, contraste, parallax y máscaras de
+  sombra. `flat()` no es "un punto de partida razonable": es la superficie
+  que Scene siempre dibujó, y la promesa de que un proyecto anterior
+  renderiza **bit a bit** igual. `sanitized()` recorta lo que a la vista
+  parece otro bug (un `smoothness` negativo parece una luz invertida; un
+  `parallaxDepth` negativo parece el artwork deslizándose de su carta).
+- `SceneLight.h` — el **modelo**; la matemática ya estaba en Fase 4 y este
+  archivo **no la repite**: `SceneLightKind`/`SceneLightBlend` son los
+  enums de `Render/SceneLighting.h`, usados aquí, no declarados otra vez.
+  `SceneLight::params()` es la costura única hacia `SceneLightParams`.
+- `SceneLayer.h` — la carta. `planePoint` (escala → shear → roll, y el
+  orden **es** la definición), `liftToWorld` (lineal y ortonormal),
+  `orientation()` (la rotación de la que cuelga un manipulador),
+  `lightingPlane`/`lightingTangent` y `rigFrame`.
+- `SceneComposition.h` — el orden de dibujo es `sortingOrder` con el array
+  rompiendo empates, **estable**; la profundidad no reordena nada. Sin
+  atajo `lighting()`: el Swift registra que existió un commit y era una
+  trampa (construía la iluminación de las luces *autoradas*, saltándose el
+  muestreo por frame).
+- `SceneCamera.h` + `SceneRenderAdapters.h` — cierran los dos constructores
+  de conveniencia de `SceneProjection` y `cardCorners`/`cardPoint`. Los
+  adaptadores viven del lado del **modelo** a propósito: Render no debe
+  conocer el compositing.
+
+Los tests reproducen el bug del gizmo en vez de describirlo: la
+orientación de una carta con shear es ortonormal, y el frame que se sacaba
+diferenciando `planePoint` **no lo es** (se comprueba que el ángulo entre
+sus ejes se desvía de forma visible).
+
+### Pendiente
+
+- **`ScenePersistence.swift` (463)** — cierra el chunk SCENES y saca de
+  `ProjectDocument::unrecognized` las secciones de Scene. El test de punta
+  a punta de `unrecognized` debe seguir pasando para lo que siga sin
+  modelarse.
+- **`ScenePlayback.swift` (105)** y **`SceneSelection.swift` (47)**.
+- **El muestreo por frame** — `sceneLighting(for:atFrame:)` y las pistas de
+  animación de luces/cámara viven en `SceneManager` (god object); hay que
+  inyectar lo necesario, no portarlo.
+- **`PhysicsPreviewTool`** (Fase 2) — necesita que `EditorScene` tenga una
+  instancia viva de `PhysicsConstraintSystem`.
+- **Export**: `Export/ExportManager.swift` (135) + `ExportSettings.swift`.
 
 ## Riesgos nombrados
 

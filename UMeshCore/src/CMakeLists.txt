@@ -11,6 +11,7 @@ add_library(umeshcore STATIC
     Animation/AnimationLibrary.cpp
     Animation/SceneAnimator.cpp
     Model/Bone.cpp
+    Model/Scene/SceneModel.cpp
     Constraints/ConstraintPropagation.cpp
     Constraints/IKSolver.cpp
     Constraints/PathSolver.cpp
