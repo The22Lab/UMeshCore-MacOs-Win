@@ -1658,8 +1658,42 @@ Special-case validation needs, carried over into each phase's own tests:
    a synthetic future section, and `ProjectPackageTests`' disk round trip
    does the same and gains the Scene-mode counterpart.
 
-   Tested: `tests/SavedSceneTests.cpp` (26 tests). All 44 test binaries
-   pass.
+   `BinaryExporter::writeScenesChunk` closes the other half of Scene
+   persistence, and with it the last deferred chunk of the UMSH binary
+   format -- SCENES was left out in Phase 3 because it serializes
+   `SceneComposition`/`SceneLayer`/`SceneCamera`, and the header said to
+   add it "the same way" once Phase 5 landed them. The compositions are
+   INJECTED into `exportScene` rather than read off `EditorScene`, which
+   stays the minimal editor aggregate -- the same split Swift has between
+   `SceneManager` and `AssetManager`, and the one `assets` already used.
+   The two-argument overload stays and writes no chunk, so Swift's own
+   `if !scene.sceneCompositions.isEmpty` gate is preserved exactly: a rig
+   that never used Scene mode still produces a file identical to one from
+   before the chunk existed, byte for byte, which a test asserts by
+   comparing the two blobs.
+
+   Three things about the chunk are worth knowing:
+   - Layers are written IN DRAW ORDER, back first, and the chunk carries
+     NO layer number. The array order is only a tie-break now, so writing
+     it raw would hand the runtime a stacking the editor never drew; and
+     what a player needs is the order, not the arithmetic that produced
+     it. The test's fixture creates its three cards in an order that is
+     deliberately not their stacking, so the assertion is real rather than
+     satisfied by accident.
+   - The camera tracks are written once PER COMPOSITION, and every
+     composition gets the same ones, because they come from the project's
+     single `sceneAnimationClip`. That is Swift's behaviour and the
+     format's shape, so it is reproduced rather than "fixed" -- but it
+     means the format cannot express per-composition camera animation
+     today. Asserted in a test so that changing either side is a
+     deliberate act.
+   - The shear and the material are NOT in the chunk. Also Swift's layout:
+     the runtime format predates both, and adding fields to a frozen chunk
+     without a version bump is how a reader starts parsing the next record
+     as part of this one.
+
+   Tested: `tests/SavedSceneTests.cpp` (26 tests) and five more in
+   `tests/BinaryExporterTests.cpp`. All 44 test binaries pass.
 
    Tested: `tests/SceneCompositionTests.cpp` (23 tests) -- draw order and
    its tie-break, depth reordering nothing, front-to-back being exactly

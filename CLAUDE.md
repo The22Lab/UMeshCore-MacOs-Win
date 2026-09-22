@@ -177,8 +177,8 @@ directamente es mucho más arriesgado que extraer primero en el Mac.
 Tres formatos, los tres portados:
 
 - **Binario UMSH**: formato, `BinaryWriter`, `BinaryReader` (código nuevo
-  — el escritor Swift no tiene lector), y `BinaryExporter` con 6 de 7
-  chunks.
+  — el escritor Swift no tiene lector), y `BinaryExporter` con **los 7
+  chunks** (SCENES cerrado en Fase 5).
 - **`.umesh` nativo**: módulo JSON propio, todas las conversiones
   `Saved*`, el manifiesto `ProjectDocument`, y la capa de paquete
   (directorio + `Assets/` con deduplicación SHA-256, escritura atómica,
@@ -188,9 +188,9 @@ Tres formatos, los tres portados:
   unidades preservadas por campo (un hueso usa radianes para shear; un
   sprite usa **grados**).
 
-**Pendiente:** `writeScenesChunk` y las secciones de Scene-compositing del
-manifiesto → Fase 5. Embebido base64 de texturas en UMJSON (`AssetRecord`
-lleva ruta, no bytes).
+**Pendiente:** embebido base64 de texturas en UMJSON (`AssetRecord` lleva
+ruta, no bytes). `writeScenesChunk` y las secciones de Scene del manifiesto
+ya están cerrados por Fase 5.
 
 **Permanente:** `SavedEditorState` (escalares de UI de `AppState`) no se
 porta — es estado de shell. Se preserva textualmente vía
@@ -604,6 +604,25 @@ Una escena vacía **no escribe nada**: sin composiciones no se emite
 `sceneCompositions` ni `sceneViewCamera`, que es lo que mantiene los
 archivos byte-estables para proyectos que nunca tocan el modo Scene.
 
+**Chunk SCENES** (`BinaryExporter::writeScenesChunk`), diferido desde Fase
+3 y ahora cerrado: el séptimo y último chunk del binario UMSH. Las
+composiciones se **inyectan** en `exportScene` (igual que los assets), no
+viven en `EditorScene`. Dos cosas que conviene saber:
+
+- Las capas se escriben **en orden de dibujo**, de atrás hacia delante, y
+  el chunk **no lleva número de capa**: lo que un player necesita es el
+  orden, no la aritmética que lo produjo. Escribir el array crudo le daría
+  al runtime un apilado que el editor nunca dibujó.
+- Las pistas de cámara se escriben **una vez por composición** y todas
+  reciben las mismas, porque salen del único `sceneAnimationClip` del
+  proyecto. Es el comportamiento de Swift y la forma del formato: se
+  reproduce, no se "arregla" — pero implica que hoy el formato no puede
+  expresar animación de cámara por composición.
+- El shear y el material **no** están en el chunk. Es el layout de Swift:
+  el formato de runtime es anterior a ambos, y añadir campos a un chunk
+  congelado sin subir la versión es como un lector empieza a parsear el
+  siguiente registro como parte de este.
+
 Un bug encontrado por un test durante este incremento: `frontSortingOrder`
 usaba el `-1` de Swift como semilla del máximo en vez de como valor para
 el caso vacío, así que una escena con todas las capas en órdenes negativos
@@ -636,10 +655,9 @@ el shear va en unidades ya escaladas, igual que `SceneImage` aplica skew.
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 1 | Chunk SCENES del binario | `Export/BinaryExporter.swift` § `writeScenesChunk` | — | La otra mitad de la persistencia: el modelo ya está, falta el volcado binario. `BinaryExporter` lo tiene diferido desde Fase 3. |
-| 2 | Resto del modelo | `ScenePlayback.swift` (105) + `SceneSelection.swift` (47) | 152 | |
-| 3 | `PhysicsPreviewTool` | Fase 2, bloqueado | 59 | Solo necesita que `EditorScene` tenga una instancia viva de `PhysicsConstraintSystem`. |
-| 4 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
+| 1 | Resto del modelo | `ScenePlayback.swift` (105) + `SceneSelection.swift` (47) | 152 | |
+| 2 | `PhysicsPreviewTool` | Fase 2, bloqueado | 59 | Solo necesita que `EditorScene` tenga una instancia viva de `PhysicsConstraintSystem`. |
+| 3 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
 
 ---
 
