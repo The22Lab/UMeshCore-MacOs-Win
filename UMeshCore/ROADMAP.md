@@ -169,17 +169,43 @@ Special-case validation needs, carried over into each phase's own tests:
    compositing instances, Phase 5) — which is a real, self-contained
    subsystem in its own right (`Animation/SceneAnimator.h/.cpp`, new this
    session), not previously called out as its own unit in this roadmap.
-   *Status: started.* `clipSampledBones` (every bone's local transform
+   *Status: in progress.* `clipSampledBones` (every bone's local transform
    sampled from its own `AnimationClip` at a time, the piece
    `applyBoneAnimations` and `solveRigPose` both call into) is ported and
    tested, including the `cyclicRotation: true` angle-unwrap this pass uses.
-   The rest of the evaluator, `commitKeyframe`/`commitMeshDeformKeyframe`,
-   and then `ToolManager` + the 8 tools on top of both, are the concrete next
-   steps, in that order — each tool's manipulation math (drag deltas, snap,
-   axis constraint) is independent of this and could in principle be ported
-   sooner, but every tool's `onMouseDown`/`onMouseUp` writes through one of
-   these two branches, so a tool ported without them would be untestable
-   against real behavior, not just incomplete.
+   `applyBoneBindings`/`boundImagePose` (places a bound sprite on its bone:
+   bone world matrix composed with the sprite's local affine, decomposed
+   back into position/rotation/scale/skew, with the same-frame rotation
+   unwrap so a bone sweeping across ±180° doesn't visibly jump) and
+   `ensureImageAnimationSpaceConsistency`/`convertImageAnimationSpace`/
+   `convertPosition`/`convertRotation` (keeps a sprite's animation tracks —
+   base pose and every translate/rotate keyframe — expressed in world space
+   or in whichever bone it's bound to, converting on bind/unbind so the
+   sprite never moves on screen) are also ported and tested. Deliberate
+   divergence, documented in `SceneAnimator.h`'s file header: the Swift
+   source reads bone world matrices from `SceneManager.frameWorldMatrices()`,
+   a once-per-rendered-frame memoization cache that exists purely to avoid
+   re-stepping physics more than once per real frame; `applyBoneBindings`
+   here instead takes the world matrices as a parameter, matching the
+   existing decision that physics stepping is the caller's concern (see
+   `Skeleton::worldMatrices()`), so this file has no per-frame cache/token
+   state of its own — behavior is unchanged, only where that memoization
+   would live has moved to whatever eventually plays SceneManager's role.
+   Remaining in this file: `applyConstraintAnimations`/
+   `constraintSampledSkeleton` (needs `constraintSetupValues`, the
+   authored-vs-animated constraint value bookkeeping from
+   `Data/ConstraintAnimation.swift` — not ported, and itself needs new
+   `Skeleton` methods to get/set a constraint's scalar/flag/vector
+   properties by `AnimationTrackProperty`, which don't exist yet either),
+   `applyDrawOrderAnimation`, `applyAttachmentAnimations`, `applySetupPose`,
+   `commitKeyframe`/`commitMeshDeformKeyframe`, and the whole-scene
+   `applyAnimations`/`solveRigPose` orchestrators. Then `ToolManager` + the 8
+   tools on top of all of it — each tool's manipulation math (drag deltas,
+   snap, axis constraint) is independent of this and could in principle be
+   ported sooner, but every tool's `onMouseDown`/`onMouseUp` writes through
+   one of the two `isAnimationEditingEnabled` branches above, so a tool
+   ported without them would be untestable against real behavior, not just
+   incomplete.
 3. **Serialization** — binary UMSH chunked format (byte-exact; the
    `.meshDeform` empty-payload gap in the current Swift writer needs an
    explicit decision before the reader is written, not a silent port-as-is —
