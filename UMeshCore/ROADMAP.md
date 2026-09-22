@@ -1535,8 +1535,71 @@ Special-case validation needs, carried over into each phase's own tests:
    stating because one test asserted the opposite first and the code was
    right: an infinite `parallaxDepth` comes back 0.05, not 0.5.
 
-   Tested: `tests/SceneLayerTests.cpp` (31 tests). All 42 test binaries
-   pass.
+   Tested: `tests/SceneLayerTests.cpp` (31 tests).
+
+   `Scene/SceneComposition.h/.cpp` then ports the `SceneComposition` half
+   of `Data/Scene/SceneComposition.swift`, `Scene/SceneCamera.h` ports
+   `Data/Scene/SceneCamera.swift`, and `Scene/SceneLight.h` ports the
+   MODEL half of `Data/Scene/SceneLight.swift`.
+
+   Three things this deliberately did NOT write:
+   - The lighting math. It landed in Phase 4 as
+     `Render/SceneLighting.h`'s `LightFalloffCurve`, `lightDirection`,
+     `lightInnerRadius`, `lightBandWidth` and `SceneLightParams` -- which
+     is precisely "everything the lighting math reads off a light". So
+     `SceneLight::params()` fills one and `direction()`/`innerRadius()`/
+     `bandWidth()` ask the existing functions. A second transcription of
+     the band width would be a particularly bad one to have: it is what
+     the lattice density is chosen from, so two versions would not look
+     wrong, they would look slightly grainy.
+   - `SceneAmbient`. Already ported, in the same Render header, because
+     the lighting solve holds one directly. A model-side copy is how two
+     structs that mean the same thing start to differ by a field.
+   - A second pair of "model" enums. `SceneLightKind` and
+     `SceneLightBlend` already exist; what actually has to be explicit is
+     the mapping from a case to its STORED TOKEN, which is what
+     `sceneLightKindName`/`FromName` are. Never a cast -- a cast would
+     make the saved file depend on declaration order, the rule
+     `SceneGPUTypes.h` states for the wire codes.
+
+   `SceneCamera` closes `SceneProjection`'s first deferred convenience
+   initializer, as `sceneProjection(camera, viewSize)`. It lives in the
+   Scene header rather than on `SceneProjection` so the dependency points
+   one way: Scene knows about Render, Render never learns about Scene.
+   `SceneViewCamera::projection()` was already the other half.
+
+   `drawOrderedLayers` sorts `(sortingOrder, index)` pairs explicitly
+   rather than sorting layers by the number alone. Neither Swift's
+   `sorted(by:)` nor `std::sort` is stable, and the array's order is the
+   documented tie-break -- two cards on one layer swapping between runs
+   would have an artist watching their set restack itself for no reason.
+   The test uses twenty same-order cards, because a short run can pass on
+   an unstable sort by luck (most implementations insertion-sort small
+   ranges).
+
+   **A bug found by a test, in this port's own new code.**
+   `frontSortingOrder` used Swift's `-1` as the SEED of the running
+   maximum rather than as the fallback for an empty scene. Every layer
+   having a negative `sortingOrder` then gave 0 -- putting a new card
+   BEHIND the cards it was supposed to lead, and only in a scene where the
+   artist had numbered everything below zero. `max() ?? -1` means the max
+   of the array, with -1 standing in only when there is no array.
+
+   Two small additive changes in `Render/SceneLighting.h`, documented in
+   place: `LightFalloffStop`, `LightFalloffCurve` and `SceneAmbient` gained
+   equality, because the Phase 5 model types that hold them are
+   `Equatable` in Swift. The curve compares by its STOPS and not by its
+   table: the table is derived, so comparing it would restate the same
+   information 256 times and would call two curves different over a
+   rounding difference in the tabulation.
+
+   Tested: `tests/SceneCompositionTests.cpp` (23 tests) -- draw order and
+   its tie-break, depth reordering nothing, front-to-back being exactly
+   the reverse (the two ends disagreeing is a bug this project has already
+   shipped once), the visibility threshold, the shot camera not picking up
+   the fly camera's numbers, a degenerate depth range still producing a
+   divisible projection, and the light model's derived values agreeing
+   with the Phase 4 math they are asked of. All 43 test binaries pass.
 6. **Platform shells** — Mac: progressively rewire existing SwiftUI views'
    data sources to UMeshCore per landed phase, UI markup untouched. Windows:
    scaffold the full WinUI3 shell as soon as Phase 1 has any usable type

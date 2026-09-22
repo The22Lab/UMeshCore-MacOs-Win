@@ -47,7 +47,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-42 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+43 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -543,6 +543,33 @@ incluir una luz para describirse. 31 tests.
 Esto desbloquea `cardCorners`/`cardPoint` de `SceneViewCamera` y el
 `orientation()` que espera `SceneLayerUniforms`.
 
+**`Scene/SceneComposition.h/.cpp`** ← la mitad `SceneComposition` de
+`SceneComposition.swift` (241 L). **`Scene/SceneCamera.h`** ←
+`SceneCamera.swift` (59 L), que cierra `SceneProjection::init(camera:)`
+(vive en el header de Scene, no en el de Render, para que la dependencia
+apunte en un solo sentido). **`Scene/SceneLight.h`** ← la mitad *modelo*
+de `SceneLight.swift`: la matemática ya estaba en `Render/SceneLighting.h`
+y no se retranscribe — `SceneLight::params()` llena un `SceneLightParams`
+y `direction()`/`innerRadius()`/`bandWidth()` se las pide a las funciones
+que ya existen. `SceneAmbient` **tampoco** se re-declara: ya estaba en
+`Render/SceneLighting.h`. 23 tests.
+
+- **El orden del array de capas NO es el orden de dibujo.** Solo rompe
+  empates. `drawOrderedLayers()` ordena por `(sortingOrder, índice)`
+  explícitamente porque ni el sort de Swift ni `std::sort` son estables, y
+  dos cartas de la misma capa intercambiándose entre arranques es un set
+  que se reordena solo.
+- **Un enum, dos nombres.** `SceneLightKind`/`SceneLightBlend` son los
+  enums que ya declara `Render/SceneLighting.h`; el modelo solo añade sus
+  `rawValue` de texto, que son la ortografía del **formato de archivo**.
+  Nunca un cast: un cast haría que el archivo guardado dependiera del
+  orden de declaración.
+
+Un bug encontrado por un test durante este incremento: `frontSortingOrder`
+usaba el `-1` de Swift como semilla del máximo en vez de como valor para
+el caso vacío, así que una escena con todas las capas en órdenes negativos
+devolvía 0 — poniendo la carta nueva *detrás* de las que debía encabezar.
+
 Tres cosas que conviene saber antes de tocarlo:
 
 - **La invariante fundacional: toda capa es PLANA.** Su Z es constante en
@@ -570,13 +597,10 @@ el shear va en unidades ya escaladas, igual que `SceneImage` aplica skew.
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 1 | Composición | `SceneComposition.swift` | 241 | `drawOrderedLayers` es un sort **estable** escrito a mano: el orden del array rompe empates, y un sort inestable haría que dos cartas de la misma capa se intercambiaran entre arranques. |
-| 2 | Modelo de luz | `SceneLight.swift` | 390 | Solo el **modelo**: la matemática ya está en `Render/SceneLighting.h`. Los enums son `String`-backed para el formato de archivo y se mapean a `SceneLightKind`/`SceneLightBlend` con `switch` explícito, nunca cast. |
-| 3 | Cámara del shot | `SceneCamera.swift` | 59 | Cierra `SceneProjection::init(camera:)` / `init(shot:)`. |
-| 4 | Persistencia | `ScenePersistence.swift` | 463 | Cierra `writeScenesChunk` y saca de `ProjectDocument::unrecognized` las secciones de Scene. El test de punta a punta de `unrecognized` debe seguir pasando para lo que *siga* sin modelarse. |
-| 5 | Resto del modelo | `ScenePlayback.swift` (105) + `SceneSelection.swift` (47) | 152 | |
-| 6 | `PhysicsPreviewTool` | Fase 2, bloqueado | 59 | Solo necesita que `EditorScene` tenga una instancia viva de `PhysicsConstraintSystem`. |
-| 7 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
+| 1 | Persistencia | `ScenePersistence.swift` | 463 | Cierra `writeScenesChunk` y saca de `ProjectDocument::unrecognized` las secciones de Scene. El test de punta a punta de `unrecognized` debe seguir pasando para lo que *siga* sin modelarse. |
+| 2 | Resto del modelo | `ScenePlayback.swift` (105) + `SceneSelection.swift` (47) | 152 | |
+| 3 | `PhysicsPreviewTool` | Fase 2, bloqueado | 59 | Solo necesita que `EditorScene` tenga una instancia viva de `PhysicsConstraintSystem`. |
+| 4 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
 
 ---
 
