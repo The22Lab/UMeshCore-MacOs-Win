@@ -24,8 +24,9 @@ UMeshCore/
   tests/               dependency-free unit tests (see TestHarness.h) plus
                         a future tests/golden/ of JSON dumps from the Swift app
   bindings/
-    swift/             Swift/C++ direct-interop surface (Phase 6a)
+    swift/             Swift/C++ interop audit + module map notes (Phase 6a)
     win/                WinUI3/C++ consumption notes (Phase 6b)
+  include/module.modulemap   the Clang module that makes `import UMeshCore` work
   tools/golden_dump/    (planned) Swift CLI that dumps deterministic
                         reference outputs for C++ parity tests
 ```
@@ -37,6 +38,19 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
+
+To consume it from another project (either shell):
+
+```sh
+cmake --install build --prefix <prefix>
+```
+
+then `find_package(UMeshCore)` and link `UMeshCore::umeshcore`. The
+installed tree carries `include/module.modulemap` beside the headers, so a
+Swift target with `<prefix>/include` on its search path and
+`-cxx-interoperability-mode=default` can `import UMeshCore`. See
+`bindings/swift/README.md` for what does and does not cross into Swift
+unchanged.
 
 Requires a C++20 compiler (GCC 13+/Clang/MSVC all fine) and CMake >= 3.20.
 No external dependencies by design (see ROADMAP.md's math-library rationale).

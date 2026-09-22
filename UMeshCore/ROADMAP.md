@@ -1855,7 +1855,82 @@ Special-case validation needs, carried over into each phase's own tests:
    divisible projection, and the light model's derived values agreeing
    with the Phase 4 math they are asked of. All 43 test binaries pass.
 6. **Platform shells** — Mac: progressively rewire existing SwiftUI views'
-   data sources to UMeshCore per landed phase, UI markup untouched. Windows:
+   data sources to UMeshCore per landed phase, UI markup untouched.
+   *Status: started.* Both halves need the same thing first -- for the
+   library to be CONSUMABLE FROM OUTSIDE THIS TREE -- and that is what
+   landed:
+
+   - `include/umeshcore/UMeshCore.h`, the umbrella: all 97 public headers
+     in one include. It exists for the SHELLS and not for code inside
+     UMeshCore, where a `.cpp` still includes exactly what it uses, so
+     that a change to one module does not rebuild the world and a missing
+     include is caught where it happens.
+   - `include/module.modulemap`, the Clang module that makes
+     `import UMeshCore` resolve. It sits BESIDE the header tree rather
+     than inside it, because Clang looks for a module map at the root of a
+     header search path -- installing it under `include/umeshcore/` would
+     put it where nothing looks. It names one umbrella header rather than
+     using `umbrella "umeshcore"` over the directory, so a scratch header
+     left on disk cannot silently join the public surface. And it carries
+     `requires cplusplus20` deliberately: without it, a Swift target that
+     forgets `-cxx-interoperability-mode=default` gets a wall of parse
+     errors from inside `<variant>` instead of a clear diagnostic.
+   - `install`/`export` rules and `UMeshCoreConfig.cmake`. Verified end to
+     end rather than assumed: `cmake --install` to a prefix, then a real
+     external project that does `find_package(UMeshCore)` and links
+     `UMeshCore::umeshcore` compiles and runs. The generated config has no
+     `find_dependency` block and should never grow one -- convention #1
+     is that there are no external dependencies, and this is where that
+     would first show up as a lie.
+   - `HeaderSelfContainmentTests`, which compiles EVERY public header as
+     its own translation unit, alone. All 97 pass today; the target exists
+     so the first one that stops passing fails this build rather than a
+     shell's, months later, on another platform's compiler. That property
+     is what lets `src/*.cpp` include only what it uses and what makes the
+     umbrella safe to reorder.
+
+   **The Swift interop audit** (`bindings/swift/README.md`) is the real
+   content of the increment, and its conclusion is a number rather than an
+   opinion. Most of the surface crosses into Swift untouched, and that is
+   not luck: zero external dependencies means no third-party type appears
+   in any signature, which is exactly what makes the surface importable.
+   What does not cross cleanly is small and bounded --
+
+   - `std::variant`, 3 sites (`KeyframeValue`, `GizmoHandle`,
+     `SceneLayerContent`). Swift imports them opaquely: no switch over the
+     cases. The fix is a discriminant plus per-case `optional<T>`
+     accessors ALONGSIDE the variant, not replacing it, because the C++
+     side's `std::visit` exhaustiveness is worth keeping and this port has
+     several. `SceneSelection` is the precedent for the other direction:
+     it is kind-plus-id precisely because its two cases share a payload.
+   - One `std::function` typedef (`ImageHitTestFn`) plus one parameter.
+     The fix is a C function pointer + `void*` overload -- and it is the
+     SAME decision as Phase 2's deferred alpha pipeline, since
+     `ImageHitTestFn` is that pipeline's injection point. They get decided
+     together or not at all.
+   - Three pure-virtual bases (`Tool`, `Constraint`, `CanvasActivity`).
+     Swift cannot inherit from a C++ class, but the shell does not need
+     to: it consumes tools that `ToolManager` builds and sends them
+     events, which is the direction that does cross.
+   - Fourteen reference-returning accessors. Swift imports them without a
+     lifetime guarantee, and this port has already taken two bites of
+     exactly that bug class in C++ (`BinaryExporter`'s `orderedBones()`,
+     `SavedSkeleton`'s `valueOr`) where the compiler at least helped.
+
+   **What NOT to do, recorded so nobody proposes it later**: a C ABI layer
+   over everything. That is thousands of lines of hand transcription --
+   precisely the bug source this port has spent five phases avoiding -- to
+   solve four constructs. The audit exists so that can be said with
+   numbers: 3 variants, 1 function typedef, 3 virtual bases, 14
+   by-reference accessors, against ~97 headers that cross whole.
+
+   The facades are deliberately NOT written yet. The right moment is when
+   a concrete Mac view asks for one: a speculative facade is a second API
+   to maintain, and the 6a migration is progressive by the user's explicit
+   decision. Neither shell can be compiled or verified in this Linux
+   environment, which is a further reason not to write code on spec here.
+
+   Windows:
    scaffold the full WinUI3 shell as soon as Phase 1 has any usable type
    (even a hardcoded test rig), so it's exercising real C++ code from day
    one instead of pure placeholder data; wire tool interaction after Phase

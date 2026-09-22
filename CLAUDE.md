@@ -29,6 +29,9 @@ UMeshCore-MacOs-Win/
     ├── ROADMAP.md               ← registro largo: el porqué de cada decisión
     ├── HANDOFF.md               ← traspaso: decisiones abiertas y por dónde seguir
     ├── README.md
+    ├── bindings/swift/          ← auditoría de interop Swift (Fase 6a)
+    ├── bindings/win/            ← notas de consumo WinUI 3 (Fase 6b)
+    ├── include/module.modulemap ← el módulo Clang: `import UMeshCore`
     ├── include/umeshcore/<Módulo>/*.h
     ├── src/<Módulo>/*.cpp
     └── tests/                   ← un binario por archivo portado
@@ -47,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-47 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+48 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -109,7 +112,7 @@ errores reales.
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
 | 4 | Capa de geometría de render compartida | ✅ Completa (1 pieza descartada: código muerto) |
 | **5** | **Scene compositing, luces, física secundaria, export** | **✅ Completa** |
-| 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
+| **6a** | **Migrar la app Mac a consumir UMeshCore** | **🔨 En curso — la librería ya es consumible** |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
 
 ### Fase 1 — Math + modelo de datos ✅
@@ -737,6 +740,64 @@ Nada de Fase 5. Lo que sigue son las fases 6a/6b y la deuda arrastrada de
 fases anteriores (Fase 1: 3 conveniencias de `Mesh`; Fase 2: todo lo
 bloqueado por el pipeline de alfa, `MeshTool`, y la deuda SwiftUI de
 `SceneGizmoOverlay`/`TimelineView`; Fase 3: base64 de texturas en UMJSON).
+
+---
+
+## Fase 6 — la fase actual
+
+Lo primero que necesitan **6a y 6b** es lo mismo: que la librería sea
+**consumible desde fuera**. Eso ya está.
+
+### Hecho
+
+- **`include/umeshcore/UMeshCore.h`** — el umbrella: los 97 headers
+  públicos en un `#include`. Es para los shells, **no** para el código de
+  dentro: un `.cpp` de `src/` sigue incluyendo solo lo que usa.
+- **`include/module.modulemap`** — el módulo Clang que hace que
+  `import UMeshCore` resuelva. Va **junto** al árbol de headers y no
+  dentro, porque Clang lo busca en la raíz de un header search path.
+  Lleva `requires cplusplus20` a propósito: sin él, un target que se
+  olvide de `-cxx-interoperability-mode=default` recibe un muro de errores
+  desde dentro de `<variant>` en vez de un diagnóstico claro.
+- **Reglas de `install` / `export`** + `UMeshCoreConfig.cmake`.
+  Verificado de punta a punta: `cmake --install` y luego un proyecto
+  externo real que hace `find_package(UMeshCore)` y enlaza
+  `UMeshCore::umeshcore` compila y corre.
+- **`HeaderSelfContainmentTests`** — compila **cada header público como su
+  propia unidad de traducción**, solo. Los 97 pasan hoy; el target existe
+  para que el primero que deje de pasar rompa *este* build y no el de un
+  shell, meses después, con otro compilador.
+- **`bindings/swift/README.md`** y **`bindings/win/README.md`** — las
+  notas de consumo de cada plataforma.
+
+### La auditoría de interop, en corto
+
+La mayor parte de la superficie cruza a Swift **sin tocar nada**, y no es
+casualidad: cero dependencias externas (convención #1) significa que no hay
+un tipo de terceros en ninguna firma. Lo que no cruza limpio es un conjunto
+**pequeño y acotado** — por eso la respuesta es una fachada y no una capa
+C ABI sobre todo:
+
+| Construcción | Sitios | Qué hacer |
+|---|---|---|
+| `std::variant` | 3 (`KeyframeValue`, `GizmoHandle`, `SceneLayerContent`) | Discriminante + accesores `optional<T>` **junto** al variant, no en su lugar: el `std::visit` de C++ conserva la exhaustividad. |
+| typedef de `std::function` | 1 (`ImageHitTestFn`) + 1 parámetro | Sobrecarga con puntero a función C + `void*`. Se decide **junto** con el pipeline de alfa de Fase 2 — es el mismo punto de inyección. |
+| Bases con virtuales puras | 3 (`Tool`, `Constraint`, `CanvasActivity`) | Nada: el shell las **consume**, no las implementa. |
+| Accesores que devuelven referencia | 14 | Por valor los que lee una vista. Swift no da garantía de lifetime, y este port ya se llevó dos mordiscos de esa clase **en C++**. |
+
+Detalle completo, con el porqué de cada decisión, en
+`bindings/swift/README.md`.
+
+### Pendiente
+
+Las fachadas **no** están escritas, a propósito: el orden razonable es
+escribirlas *cuando una vista concreta del Mac las pida*. Una fachada
+especulativa es una segunda API que mantener, y la migración de 6a es
+progresiva por decisión explícita del usuario.
+
+Lo demás de Fase 6 sigue sin empezar (rewire de las vistas del Mac,
+andamiaje del shell WinUI 3 + DirectX), y ninguno de los dos se puede
+compilar ni verificar en este entorno Linux.
 
 ---
 
