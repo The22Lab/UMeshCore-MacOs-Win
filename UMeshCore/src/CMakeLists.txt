@@ -18,6 +18,8 @@ add_library(umeshcore STATIC
     Constraints/PhysicsConstraintSystem.cpp
     Constraints/ConstraintAnimation.cpp
     Render/SceneProjection.cpp
+    Render/SceneCulling.cpp
+    Render/SceneViewCamera.cpp
     Mesh/MeshKernel.cpp
     Mesh/MeshValidator.cpp
     Mesh/Mesh.cpp

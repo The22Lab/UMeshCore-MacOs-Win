@@ -1046,11 +1046,76 @@ Special-case validation needs, carried over into each phase's own tests:
    angle-built and frame-built cameras projecting identically. All 33 test
    binaries pass.
 
-   **Not yet started**: frustum culling (`SceneCulling.swift`, whose planes
-   are extracted from the same view-projection matrix the drawing divides
-   by, deliberately, so they cannot drift from it), the POD vertex/uniform
-   structs (`SceneGPU/SceneGPUTypes.swift`), the skin palette, gizmo mesh
-   building, lighting math, and the Metal/DirectX backends themselves.
+   `Render/SceneCulling.h/.cpp` ports `Render/SceneCulling.swift`: the
+   frustum as six world-space planes, plus `FrameRegion`, the integer
+   rectangle a culled draw is confined to. Two things carried across
+   deliberately. First, the planes are EXTRACTED from the combined
+   view-projection matrix (Gribb & Hartmann), never rebuilt from the
+   camera's field of view, aspect and near/far -- that is the whole reason
+   a culler can be trusted, since the planes then come from the same matrix
+   the drawing divides by and cannot drift from it. Second, the error is
+   allowed in ONE direction only: `culls` may keep something invisible
+   (wasted work) and may never discard something visible (an object
+   vanishing), so a hull is culled only when it lies wholly outside a
+   SINGLE plane -- a hull straddling two is kept even when it is in fact
+   outside, because deciding otherwise needs a separating-axis test and the
+   cost of being wrong is not symmetric. Clip z runs 0..w (Metal/Direct3D),
+   which is what `SceneProjection`'s perspective matrix writes, so NEAR is
+   row 2 alone; the OpenGL `w + z` form would put the near plane half a
+   frustum too far back. `FrameRegion` rounds OUTWARD, never to nearest,
+   because a rectangle rounded inward loses the anti-aliased edge of
+   whatever it bounds. One divergence, documented in place: Swift's
+   `Int(x.rounded(.down))` traps outside Int's range, so the C++ cast
+   saturates first rather than invoking undefined behavior; the caller
+   clamps into the frame either way.
+
+   `Render/SceneViewCamera.h/.cpp` ports `SceneViewCamera` (from
+   `Data/Scene/SceneComposition.swift`) plus the pure camera math of
+   `Render/SceneViewProjection.swift` -- the fly camera for the Scene
+   editor view. The two Swift files are joined here on purpose: the Swift
+   header says `SceneViewProjection.basis` must produce the SAME vectors
+   `SceneViewCamera.eye` and `.pan` already use, because "two
+   transcriptions of 'forward' is how the pivot would end up somewhere
+   other than the middle of the screen". In this port there is exactly one:
+   `cameraBasis`, already in `SceneProjection.h`, which `eye()` reads too,
+   and `projection()` is a plain `SceneProjection` rather than a second
+   copy of the projection math. `shotFrame` takes the shot camera's fields
+   explicitly ("inject what's needed") and keeps Swift's UNCLAMPED focal
+   length -- `SceneCamera.focalLength(viewHeight:)` does not clamp the
+   field of view while `SceneViewProjection.init` clamps to 1..170 -- since
+   the frustum gizmo it draws has to land on the frame the export actually
+   renders. `cardCorners`/`cardPoint` are NOT ported: they take a
+   `SceneLayer` and call its `planePoint`/`liftToWorld`, which is Phase 5,
+   and inventing a layer type now would mean re-transcribing that lift --
+   the failure the file itself warns about.
+
+   Tested: `tests/SceneCullingTests.cpp` (10 tests) and
+   `tests/SceneViewCameraTests.cpp` (9 tests). The culling tests check the
+   asymmetric rule against `SceneProjection` itself over 4000 random
+   cameras and points -- anything the projection would actually draw is
+   never culled -- plus the behind-the-eye case a transposed row extraction
+   gets exactly backwards, the near plane sitting at nearZ rather than half
+   a frustum back, the far plane agreeing with `clipAndProject` (the
+   disagreement the Swift header measured at 51 layers out of 20 000, every
+   one putting pixels on the canvas), normalised planes so a margin is in
+   world units, and `FrameRegion`'s outward rounding, frame clipping and
+   NaN fallback to the whole frame. The camera tests pin the pivot staying
+   at the exact screen centre through sixteen orbits (the one property a
+   second transcription of "forward" breaks), a pan of N pixels moving the
+   picture by exactly N pixels (world-per-pixel and focal length being
+   inverses of each other), the pitch clamp, the multiplicative dolly, and
+   `shotFrame`'s corners projecting onto the render's corners at three
+   distances under a rotated shot. All 35 test binaries pass.
+
+   Caveat carried from the Swift sources: `Editor/verify_scene_culling.py`,
+   cited for the 1.3 % over-keep rate and the 51-layer figure, does not
+   exist in this repository (see CLAUDE.md). The properties those numbers
+   measured are what the tests pin instead.
+
+   **Not yet started**: the POD vertex/uniform structs
+   (`SceneGPU/SceneGPUTypes.swift`), the skin palette, gizmo mesh building,
+   auxiliary geometry builders, lighting math, the frame budget, the
+   reference shader math, and the Metal/DirectX backends themselves.
 5. **Scene compositing / lighting / physics secondary motion / export** —
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)

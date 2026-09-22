@@ -46,7 +46,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-33 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+35 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -106,7 +106,7 @@ errores reales.
 | 1 | Math + modelo de datos | ✅ Completa salvo 3 conveniencias de editor |
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
-| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 1 de ~9 piezas** |
+| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 3 de ~9 piezas** |
 | 5 | Scene compositing, luces, física secundaria, export | ⬜ No empezada |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
@@ -216,12 +216,41 @@ tenía término `rotation3D`, así que un sprite rotado en 3D se exportaba
 distinto de como se veía. Dos backends de render re-derivando esto
 reproducirían ese bug exacto.
 
+**`Render/SceneCulling.h/.cpp`** ← `Render/SceneCulling.swift` (145 L).
+`SceneFrustum` (seis planos extraídos de la view-projection, Gribb &
+Hartmann) y `FrameRegion` (rectángulo entero del frame, redondeado hacia
+**fuera**). 10 tests.
+
+La regla asimétrica es el contrato: puede **conservar** algo invisible
+(trabajo perdido) y **nunca** descartar algo visible (objeto que
+desaparece). Por eso se descarta solo cuando el hull entero queda fuera de
+**un** plano. El test principal no re-deriva coeficientes: comprueba contra
+`SceneProjection` misma, sobre 4000 cámaras y puntos aleatorios, que nada
+de lo que el proyector dibujaría se descarta.
+
+Divergencia documentada: `Int(x.rounded(.down))` de Swift trapea fuera del
+rango de `Int`; el cast en C++ satura antes (el llamante recorta al frame
+igual).
+
+**`Render/SceneViewCamera.h/.cpp`** ← `SceneViewCamera`
+(`Data/Scene/SceneComposition.swift`) + la matemática de cámara de
+`Render/SceneViewProjection.swift` (177 L). 9 tests.
+
+Los dos Swift se unen aquí a propósito: el header dice que `basis` debe dar
+**los mismos vectores** que usan `eye` y `pan`, porque "dos
+transcripciones de forward es como el pivote acaba en otro sitio que el
+centro de la pantalla". Aquí hay una sola: `cameraBasis`, ya en
+`SceneProjection.h`. El test que lo cubre es exactamente ese: el pivote se
+queda en el centro exacto tras dieciséis órbitas.
+
+No portado: `cardCorners`/`cardPoint` — toman un `SceneLayer` y llaman a su
+`liftToWorld`; eso es Fase 5, e inventar el tipo ahora obligaría a
+re-transcribir ese lift, el fallo que el propio archivo advierte.
+
 ### Pendiente, en orden de dependencia
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 1 | Frustum culling | `Render/SceneCulling.swift` | 145 | Los planos se **extraen de la misma view-projection matrix** por la que divide el dibujo (Gribb & Hartmann); reconstruirlos desde la cámara los deja derivar. Regla asimétrica: puede conservar algo invisible (trabajo perdido), **nunca** descartar algo visible (objeto que desaparece). |
-| 2 | Cámara de vuelo | `Render/SceneViewProjection.swift` | 177 | `cameraBasis` ya está dentro de `SceneProjection.h`; falta órbita y `eye`. |
 | 3 | Structs POD de GPU | `Render/SceneGPU/SceneGPUTypes.swift` | 278 | **Leer primero su cabecera**: el padding está deletreado a mano porque Metal alinea `float3` a 16 bytes. El drift produce una luz leyendo el radio de su vecina. |
 | 4 | Paleta de skinning | `Render/SceneGPU/SceneSkinPalette.swift` | 170 | |
 | 5 | Layout + mallas de gizmo | `SceneGizmoLayout.swift` (135) + `SceneGizmoMeshBuilder.swift` (478) | 613 | Depende de `worldLengthForPixels` (ya portado). |
@@ -264,7 +293,8 @@ equivalente en UMeshCore: `SceneComposition.swift` (241),
 
 Portarlos cierra de golpe cuatro pendientes: el chunk SCENES, las secciones
 de manifiesto que hoy viven en `unrecognized`, los dos constructores de
-conveniencia de `SceneProjection`, y `PhysicsPreviewTool`.
+conveniencia de `SceneProjection`, `cardCorners`/`cardPoint` de la cámara
+de vuelo, y `PhysicsPreviewTool`.
 
 Export: `Export/ExportManager.swift` (135) + `Export/ExportSettings.swift`.
 
