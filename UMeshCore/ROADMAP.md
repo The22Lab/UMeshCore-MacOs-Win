@@ -292,65 +292,115 @@ Special-case validation needs, carried over into each phase's own tests:
    `pointOnHullBoundary` — not ported) is a newly-identified, `MeshTool`-
    scoped gap, deferred alongside that tool.
 
+   **Status: Phase 2's tool layer is now complete, except two tools with
+   real, documented, further-reaching blockers (`MeshTool`,
+   `PhysicsPreviewTool` — see below).**
+
    The plan for unblocking `ToolManager`'s *dispatch logic* without
-   `CanvasPicking.imageHit` (still needs Phase 4/5's asset pipeline) is now
+   `CanvasPicking.imageHit` (still needs Phase 4/5's asset pipeline) is
    built and proven: `Editor/CanvasPicking.h/.cpp` ports `CanvasPicking`'s
    arbitration rule in full (`target()`: a hit ON something beats a hit
    NEAR something, whatever kind it is; bone wins ties) with the image
    hit-test itself injected as an `ImageHitTestFn` callback — a platform
    with no texture pipeline yet passes one that always returns nullopt,
    which makes `target()` degrade to correct bone-only picking, not a stub
-   of a stub. `Editor/Tool.h` ports the `Tool` protocol (adding `hitScale`/
-   `touchOptimized` as explicit parameters, threaded the rest of the way
-   from `ToolUtilities.h`'s already-established externalization of them),
-   and `Editor/Tools/SelectTool.h/.cpp` is the first concrete tool, ported
-   and tested end to end (5 tests: image click, bone click, shift-click
-   multi-select, click-to-clear, shift-click-preserves-on-empty-canvas)
-   against this design.
+   of a stub. `Editor/Tool.h` ports the `Tool` protocol (`EditorScene&` +
+   `ImageHitTestFn` in place of `scene: SceneManager`/`assets: AssetManager`,
+   plus `hitScale`/`touchOptimized` as explicit parameters, threaded the
+   rest of the way from `ToolUtilities.h`'s existing externalization of
+   them).
 
-   `Editor/Tools/MoveTool.h/.cpp` is the second concrete tool, ported and
-   tested (5 tests: sprite drag with preview-then-commit, a plain click
-   that must NOT move anything, single-bone drag with keyframe commit in
-   Animate mode, multi-bone group drag by one shared delta, and the
-   move-X/move-Y gizmo-handle axis constraint). Its bone-drag and
-   sprite-drag branches are both ported in full; only the mesh-vertex-drag
-   branch is deferred, documented in the file header, with the SAME two
-   causes as `updateMeshVertex` above (the asset pipeline for its entry
-   condition, `updateMeshVertex` itself for its per-frame write) — not a
-   new gap, the same one surfacing at a second call site. One
-   simplification made porting it: Swift's `onMouseDown`/`onMouseDrag` each
-   duplicate an identical "convert the drag into world space, applying the
-   active move-X/move-Y axis constraint" block once for bones and once for
-   sprites; factored into one private `computeDragPosition` helper here
-   since the two copies were byte-identical logic, not two different rules
-   that happen to look alike.
+   Six of the eight tools are ported and tested against this design:
+   - `SelectTool` — image/bone click, Shift/Cmd multi-select, click-to-clear
+     (except a Cmd-drag from empty canvas, which adds a marquee instead).
+   - `MoveTool` — sprite drag (live preview, committed on release) and
+     bone/bone-group drag, both with the move-X/move-Y gizmo axis
+     constraint and Shift-snap. Its mesh-vertex-drag branch is deferred,
+     needing the same two things `updateMeshVertex` needs everywhere else
+     in this port (see `MeshTool` below).
+   - `ScaleTool` — corner-handle scaling (uniform or single-axis), Shift
+     snap, bone scale (Animate) vs. bone length (Setup), group scaling
+     preserving proportions, and the post-release "settle" ease
+     (`Tool::update`'s first real use). Needed one new `EditorScene`
+     mutator, `setBoneScale`.
+   - `SkewTool` — per-axis shear from a skew-edge handle, angle-delta
+     driven, +-180 clamped, Shift rounds to whole degrees. Needed one new
+     `EditorScene` mutator, `setBoneSkew`.
+   - `RotateTool` — angle-delta rotation for a sprite or a rigid bone
+     group, Shift-snaps to 15 degree steps, zeroes a grabbed sprite's 3D
+     tilt, and the same settle-on-release pattern as `ScaleTool`. Verified
+     against the real Swift source that `RotationGizmoState`/`ArcHitTest`
+     (a separate 3D-tilt gizmo/tool) are NOT a dependency despite the name
+     similarity — a suspected blocker that turned out to be false.
+   - `BoneTool` — posing existing bones (root/tip drag) and authoring new
+     ones (drag from empty canvas, or chain a new bone from an existing
+     tip). Needed two new `EditorScene` additions: `addBone` and bone-
+     creation preview state. **Found and documented a real Swift dead-code
+     discrepancy** (not silently "fixed"): `onMouseDown` checks
+     Shift/Cmd and toggles multi-selection *before* ever calling
+     `interactionForHit`, so that function's own "Shift resizes the tip"
+     branch — with a multi-line comment explaining that exact design — is
+     unreachable in the app as it stands today. Ported the real, reachable
+     behavior (Shift-click a tip toggles selection, same as anywhere else
+     on a bone; it does not resize); flagged for confirmation against the
+     Swift binary once Xcode access exists, the same standing already given
+     the `MeshKernelTests` `RingFoldsBack`/`RingSelfIntersecting` finding
+     from Phase 1.
 
-   `Editor/Tools/ScaleTool.h/.cpp` is the third concrete tool, ported and
-   tested (7 tests: no-op without a scale-corner handle active, a uniform
-   corner scaling both axes by the drag-distance ratio, a single-axis
-   corner (index 0/1) scaling only x or y, Shift-snap during a drag,
-   single-bone scale with keyframe commit in Animate mode, bone length
-   change in Setup mode, and the post-release "settle" easing converging
-   to its snapped target over repeated `update()` calls). Needed one new
-   `EditorScene` mutator, `setBoneScale` — a straight 1:1 port of
-   `SceneManager.setBoneScale`, following the exact same
-   Setup-writes-base/Animate-commits-keyframe shape as `moveBoneRoot` and
-   friends. `ScaleTool.onMouseDown`'s image-vs-hit-test precedence is the
-   mirror image of `MoveTool`'s: `scene.selectedImageID` is tried FIRST,
-   falling back to the injected hit-test only if nothing is selected
-   (`MoveTool` tries the hit-test first) — a genuine difference between the
-   two tools in the Swift source, preserved exactly rather than
-   "harmonized." `update()` (the settle-toward-target easing after a
-   Shift-snapped release) is this port's first real use of `Tool::update`,
-   confirming that hook's shape works as designed.
+   `ToolManager` itself (`Editor/ToolManager.h/.cpp`) is also ported: the
+   full click/drag/release dispatch (gizmo-grab detection via
+   `ToolUtilities::hitTestGizmo`, the image-vs-bone selection-click policy —
+   including the click-count/touch-vs-desktop "when does a click change the
+   selection" rule — and per-tool default-handle arming), `handlePointerExit`,
+   `update`, `setTool`, and the bone marquee in Pose mode (via the already-
+   ported `ToolUtilities::bonesIntersecting`). Missing tools are looked up
+   the same way Swift's own `tools[currentTool]?.onMouseDown(...)` already
+   handles one: silently does nothing, a real and safe no-op, not a crash
+   waiting to happen. Three things are deliberately NOT ported, each
+   documented in `ToolManager.h`'s file header with why:
+   - The IK-builder-picking and Bind-Mode intercepts (`handleMouseMove`/
+     `handleMouseDown`'s first two blocks) — neither subsystem is modeled
+     in `EditorScene`.
+   - The sprite marquee (`updateSelectionRect`, Select tool, not Pose
+     mode) — needs `ToolUtilities::hitTestRect`, blocked on the same
+     asset/alpha pipeline as `hitTestScreen`/`hitTestSelectionTarget`. The
+     bone marquee has no such dependency and IS ported.
+   - `updateRotationHover`/`handleRotationMouseDown`/
+     `handleRotationMouseDrag`/`syncRotationState` — verified by grepping
+     the whole Swift source tree that these four private methods have ZERO
+     call sites anywhere, including within `ToolManager` itself. Provably
+     dead code, not merely unlikely to run (contrast with the `BoneTool`
+     finding above, which is reachable in principle, just not from the
+     current caller) — not ported.
 
-   `ToolManager` + the other 5 tools (Rotate/Skew/Bone/Mesh/PhysicsPreview)
-   are next, with a proven pattern to follow: each tool's manipulation math
-   (drag deltas, snap, axis constraint) is independent of the picking gap,
-   and every tool's `onMouseDown`/`onMouseUp` writes through
-   `commitKeyframe`, `moveBoneRoot`/`setImagePosition`/`setBoneScale`, or
-   the selection methods above, all of which `EditorScene` already supports
-   end to end.
+   The two tools NOT ported, and precisely why (both confirmed by direct
+   research against the Swift source and this port's current surface, not
+   assumed):
+   - **`MeshTool`** (~672 lines, the largest tool) — every one of its
+     sub-modes (Bind Mode, Weight Paint, hull creation, vertex
+     select/drag, edge insert/delete) routes through at least one of: the
+     asset/alpha pipeline (Phase 4/5), or a family of mesh-editing
+     mutators (`updateMeshVertex`, `insertMeshVertex`,
+     `deleteSelectedMeshVertices`, `constrainMeshInteriorVertices`, ...)
+     that don't exist on `EditorScene` yet and themselves need
+     `Mesh::clampedPositionInsideHullIfNeeded` (needing
+     `hullVertexIndices`/`pointInsideHull`/`pointOnHullBoundary`, not
+     ported). No sub-mode sidesteps both gaps; deferred as a whole unit
+     rather than attempting a partial port with nowhere for most clicks to
+     route.
+   - **`PhysicsPreviewTool`** — its own mouse-handling logic is small and
+     self-contained (hit-test a bone, store/clear a world-space pose
+     override while dragging), and would be easy to port mechanically.
+     But the override has no consumer: `EditorScene` doesn't own a live
+     `PhysicsConstraintSystem` instance (deliberately — see Risk #2), and
+     nothing in `SceneAnimator`'s pose evaluation reads a preview-override
+     map. Porting the mouse handlers without that integration would
+     compile and run but visibly do nothing — worse than not having it.
+     Deferred until `EditorScene` (or whatever eventually plays a live-
+     rig-instance role) owns a physics sim state, naturally alongside
+     Phase 5's physics secondary motion work.
+
+   All of the above is tested: 22 test binaries, 117 checks, 100% passing.
 3. **Serialization** — binary UMSH chunked format (byte-exact; the
    `.meshDeform` empty-payload gap in the current Swift writer needs an
    explicit decision before the reader is written, not a silent port-as-is —
