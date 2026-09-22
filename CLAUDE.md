@@ -47,7 +47,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-44 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+45 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -651,13 +651,39 @@ Tres cosas que conviene saber antes de tocarlo:
 `planePoint` es escala → shear → roll, y **ese orden es la definición**:
 el shear va en unidades ya escaladas, igual que `SceneImage` aplica skew.
 
+**`Scene/ScenePlayback.h/.cpp`** ← `ScenePlayback.swift` (105 L) y
+**`Scene/SceneSelection.h`** ← `SceneSelection.swift` (47 L). 18 tests.
+
+- **Scene tiene su propio reloj**, y no es capricho: el rig reproduce a
+  `projectFramesPerSecond` entre sus frames de playback; una escena tiene
+  su `durationInFrames` y su `fps` — un shot a 24 puede montar un rig
+  animado a 60. Y conducir la escena desde el playhead del rig rompería lo
+  que Scene *es*: cada instancia mapea el frame de escena al suyo por
+  velocidad/offset/loop, así que tres pájaros del mismo rig aletean
+  desacompasados; con el reloj del rig se moverían todos igual.
+- **Nada se acumula.** La sesión es `(startTime, startFrame, fps, bounds)`
+  y el playhead es **función pura del tiempo**. Un transport que avanzara
+  por delta correría *lento* en una máquina que pierde frames, convirtiendo
+  un frame caído en tiempo perdido y separándose del audio y del export.
+  Derivado del tiempo, un frame que no se puede entregar cuesta una
+  *muestra* del movimiento, nunca un paso.
+- **El reloj se inyecta.** Swift usa `CACurrentMediaTime()` por defecto; no
+  hay equivalente portable y el core no tiene por qué tenerlo, así que cada
+  entrada recibe el instante. Beneficio extra: el transport es exactamente
+  testeable.
+
+Documentado por un test: una muestra tomada **exactamente** en el borde de
+un frame es ambigua por un ulp cuando el reloj va por los miles de segundos
+(`(1000.0 + 1/24) - 1000.0` sale 4e-14 corto). Es inherente a la resta en
+double, idéntico en Swift, y **inofensivo justamente por la regla de
+arriba**: el error está acotado a una muestra y no se arrastra.
+
 ### Pendiente, en el orden que recomienda `HANDOFF.md`
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 1 | Resto del modelo | `ScenePlayback.swift` (105) + `SceneSelection.swift` (47) | 152 | |
-| 2 | `PhysicsPreviewTool` | Fase 2, bloqueado | 59 | Solo necesita que `EditorScene` tenga una instancia viva de `PhysicsConstraintSystem`. |
-| 3 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
+| 1 | `PhysicsPreviewTool` | Fase 2, bloqueado | 59 | Solo necesita que `EditorScene` tenga una instancia viva de `PhysicsConstraintSystem`. |
+| 2 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
 
 ---
 

@@ -1693,7 +1693,64 @@ Special-case validation needs, carried over into each phase's own tests:
      as part of this one.
 
    Tested: `tests/SavedSceneTests.cpp` (26 tests) and five more in
-   `tests/BinaryExporterTests.cpp`. All 44 test binaries pass.
+   `tests/BinaryExporterTests.cpp`.
+
+   `Scene/ScenePlayback.h/.cpp` ports `Data/Scene/ScenePlayback.swift`
+   (105 L) and `Scene/SceneSelection.h` ports `SceneSelection.swift`
+   (47 L).
+
+   Scene has a clock of its own, and the Swift header is careful about
+   why. The rig plays on `projectFramesPerSecond` between its playback
+   bounds; a scene has its own `durationInFrames` and `fps`, and a 24 fps
+   shot can stage a rig animated at 60. More importantly, driving the
+   scene from the rig's playhead would break what Scene is FOR: each
+   instance maps the scene frame to its own clip frame through speed,
+   offset and loop (`SceneLayer::rigFrame`), so three birds from one rig
+   flap out of step -- share the playhead and they all move together,
+   which is the feature gone.
+
+   NOTHING ACCUMULATES. A session is `(startTime, startFrame, fps,
+   bounds)` and the playhead is a pure function of the time. A transport
+   that advanced by a delta each tick would run SLOW on a machine that
+   misses its schedule, turning a dropped frame into lost time and
+   drifting away from the audio, the export and the wall clock. Derived
+   from the time, a frame the machine cannot deliver costs one SAMPLE of
+   the motion and never a step of it.
+
+   The clock is INJECTED rather than owned: Swift defaults `now` to
+   `CACurrentMediaTime()`, there is no portable equivalent, and the core
+   has no business having one. Same "inject what's needed" rule as the
+   rest of the port, with a second benefit Swift's version does not get --
+   the transport is exactly testable, because a test can hand it any
+   instant it likes.
+
+   **A property found while testing, documented rather than worked
+   around.** A sample taken at the EXACT instant a frame begins can come
+   back one frame early, because `now - startTime` is a difference of two
+   large doubles: `(1000.0 + 1.0/24.0) - 1000.0` is about 4e-14 short, so
+   `elapsed * 24` floors to 0 instead of 1. From a clock at zero it does
+   not happen; from a monotonic clock in the thousands of seconds it does.
+   It is inherent to the arithmetic and identical in Swift, and it is
+   harmless for exactly the reason the file is built around: the playhead
+   is derived, not accumulated, so the error is bounded at one sample and
+   the next tick is right again. A transport that stepped by a delta would
+   have turned the same ulp into permanent drift. The test asserts the
+   bounded behaviour instead of pretending the boundary is exact.
+
+   `SceneSelection` is modelled as a kind plus an id rather than as a
+   `std::variant`, unlike `SceneLayerContent`: both cases carry the same
+   payload type and nothing else, so a variant would need two wrapper
+   structs to stay distinguishable and would read as ceremony. The
+   invariant that matters -- ONE THING AT A TIME -- holds either way,
+   because there is one id field and not two. That invariant is the whole
+   point of the type: it replaced a `selectedLayerID` in a view and a
+   `selectedSceneLightID` on the manager, which nothing kept in step, so
+   selecting a light left the previous layer's gizmo on the canvas and
+   every caller that asked "what is selected" had to ask twice and decide
+   which answer won -- differently each time.
+
+   Tested: `tests/ScenePlaybackTests.cpp` (18 tests). All 45 test binaries
+   pass.
 
    Tested: `tests/SceneCompositionTests.cpp` (23 tests) -- draw order and
    its tie-break, depth reordering nothing, front-to-back being exactly
