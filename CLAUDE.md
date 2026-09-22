@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-51 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+52 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -211,7 +211,36 @@ puntos que agarra el artista y los anillos/arcos que dibuja la GPU
 (rellena el `SceneGizmoLayout::LightDiagram` que la Fase 4 dejó definido y
 sin llenar).
 
-Falta de la deuda SwiftUI: `TimelineView.swift` entero (4326 L).
+**`Editor/GraphViewport.h/.cpp`** ← `GraphViewport.swift` (302 L) +
+`GraphMetrics.swift` (59 L). 9 tests. Primer trozo de la deuda del
+timeline, y el correcto para empezar: los dos archivos ya estaban limpios
+(tipos de CoreGraphics y aritmética, sin cuerpo de vista) y el resto de
+`TimelineView.swift` los lee.
+
+El viewport existe por un bug concreto: el rango vertical se derivaba de
+los **valores de los keyframes**, y una cúbica entre dos claves no está
+acotada ni por sus claves ni por sus puntos de control — lo está por sus
+**propios extremos**. La curva se recortaba para caber en un rectángulo
+derivado de algo que no es la curva. La regla que el tipo impone: la curva
+y el viewport son independientes; nada recorta un valor para que quepa,
+`fitting` mueve la **vista**.
+
+El test no re-deriva la cuadrática: compara los extremos resueltos contra
+un muestreo denso de la curva (200 001 muestras) y exige que coincidan.
+
+Dos propiedades más, ambas con test: **toda proyección tiene inversa
+exacta** (un arrastre lee un píxel, guarda un valor y vuelve al mismo
+píxel), y el **suelo del zoom ensancha la vista sin moverla** — sin el
+ancla, re-centrarse en el suelo arrastra la imagen en cada paso (el harness
+Swift lo midió en 262% del ancho tras noventa pasos).
+
+Divergencia: `touchScale` es `#if os(iOS)` en Swift; aquí es un parámetro.
+El core no tiene plataforma, y además un shell Windows en modo tablet
+quiere la escala táctil en la misma máquina que quiere la de puntero.
+
+Falta de la deuda SwiftUI: el resto de `TimelineView.swift` (4326 L) — el
+editor de curvas (tangentes, control points, hit-testing) sigue dentro del
+cuerpo de vista.
 `ringFrame` y las constantes de geometría que el mesh builder del gizmo
 necesita ya están extraídas a `Render/SceneGizmoLayout.h` (Fase 4, pieza
 5). Lo demás sigue dentro de las vistas:
