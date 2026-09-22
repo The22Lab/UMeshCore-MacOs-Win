@@ -47,7 +47,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-43 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+44 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -565,6 +565,45 @@ que ya existen. `SceneAmbient` **tampoco** se re-declara: ya estaba en
   Nunca un cast: un cast haría que el archivo guardado dependiera del
   orden de declaración.
 
+**`Serialization/SavedScene.h/.cpp`** ← `Data/Scene/ScenePersistence.swift`
+(463 L), más el cableado en `ProjectDocument`. 26 tests.
+
+Cierra uno de los pendientes más viejos del port: las secciones
+`sceneCompositions` / `selectedSceneCompositionID` / `sceneViewCamera`
+**salen de `ProjectDocument::unrecognized`** y pasan a campos reales.
+`unrecognized` sigue haciendo su trabajo con lo que aún no se modela (hoy
+solo `editorState`), y el test de punta a punta que lo demuestra sigue
+pasando — ahora acompañado de otro que comprueba que el modo Scene
+sobrevive un ciclo real a disco **como valores**, que es una garantía más
+fuerte que JSON opaco.
+
+Cada concesión de compatibilidad es **por campo** y nombra su escenario:
+
+- `material` ausente → superficie **plana**. No es un "neutro aproximado":
+  `isFlat` cierra una rama en la que el shader ni entra, así que "renderiza
+  bit a bit como antes" sobrevive.
+- `sortingOrder` ausente → **el índice en el archivo**. Antes de que las
+  capas tuvieran número, el apilado *era* el orden del array. Cero daría el
+  mismo orden por suerte, y dejaría de darlo en cuanto alguien tocara un
+  número.
+- `lightMask` ausente → canal 1 y `receivesLight` true, que es lo que hace
+  que una luz añadida después a una escena vieja llegue a algo.
+- Un `parallaxMode` que este build no conoce → **`off`**, nunca el más
+  parecido: elegir el más parecido renderizaría al artista una escena que
+  nunca compuso y le dejaría guardarla encima.
+- Una capa sin el payload de su tipo se **descarta**, no se inventa.
+
+Y los rangos se aplican **al entrar**, no solo en el inspector: un archivo
+editado a mano no puede producir una cámara que divida por `tan(0)`, un
+cono con el interior mayor que el exterior (el smoothstep correría al
+revés: un foco iluminado del revés), ni una máscara vacía. Ojo al detalle
+asimétrico: la máscara vacía de una **luz** restaura a *todos* los canales
+y la de una **capa** al canal 1 — responden preguntas distintas.
+
+Una escena vacía **no escribe nada**: sin composiciones no se emite
+`sceneCompositions` ni `sceneViewCamera`, que es lo que mantiene los
+archivos byte-estables para proyectos que nunca tocan el modo Scene.
+
 Un bug encontrado por un test durante este incremento: `frontSortingOrder`
 usaba el `-1` de Swift como semilla del máximo en vez de como valor para
 el caso vacío, así que una escena con todas las capas en órdenes negativos
@@ -597,7 +636,7 @@ el shear va en unidades ya escaladas, igual que `SceneImage` aplica skew.
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 1 | Persistencia | `ScenePersistence.swift` | 463 | Cierra `writeScenesChunk` y saca de `ProjectDocument::unrecognized` las secciones de Scene. El test de punta a punta de `unrecognized` debe seguir pasando para lo que *siga* sin modelarse. |
+| 1 | Chunk SCENES del binario | `Export/BinaryExporter.swift` § `writeScenesChunk` | — | La otra mitad de la persistencia: el modelo ya está, falta el volcado binario. `BinaryExporter` lo tiene diferido desde Fase 3. |
 | 2 | Resto del modelo | `ScenePlayback.swift` (105) + `SceneSelection.swift` (47) | 152 | |
 | 3 | `PhysicsPreviewTool` | Fase 2, bloqueado | 59 | Solo necesita que `EditorScene` tenga una instancia viva de `PhysicsConstraintSystem`. |
 | 4 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |

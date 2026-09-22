@@ -7,6 +7,7 @@
 #include "umeshcore/Serialization/SavedAnimation.h"
 #include "umeshcore/Serialization/SavedEditorState.h"
 #include "umeshcore/Serialization/SavedGeometry.h"
+#include "umeshcore/Serialization/SavedScene.h"
 #include "umeshcore/Serialization/SavedSceneImage.h"
 #include "umeshcore/Serialization/SavedSkeleton.h"
 
@@ -17,10 +18,11 @@ namespace {
 // Every top-level key this port models. Anything else a file carries is
 // preserved verbatim in `ProjectDocument::unrecognized` -- see the header.
 // Everything NOT listed here falls through to `unrecognized` and is
-// written back untouched rather than dropped -- today that is
-// `editorState` (platform-shell UI scalars, see SavedEditorState.h) and
-// the Phase 5 Scene-compositing sections.
-constexpr std::array<const char*, 18> kKnownKeys{
+// written back untouched rather than dropped -- today that is just
+// `editorState` (platform-shell UI scalars, see SavedEditorState.h). The
+// Scene-compositing sections used to fall through here; Phase 5 models
+// them, so they are listed below.
+constexpr std::array<const char*, 21> kKnownKeys{
     "version",
     "currentFrame",
     "playbackLoops",
@@ -39,6 +41,9 @@ constexpr std::array<const char*, 18> kKnownKeys{
     "activeSkinID",
     "animations",
     "activeAnimationID",
+    "sceneCompositions",
+    "selectedSceneCompositionID",
+    "sceneViewCamera",
 };
 
 bool isKnownKey(const std::string& key) {
@@ -166,6 +171,29 @@ JsonValue toJson(const ProjectDocument& document) {
     }
     j.set("constraintSetupValues", JsonValue::makeArray(std::move(setup)));
 
+    // Scene mode, written only once it has been USED. An empty
+    // `sceneCompositions` omits the key entirely rather than writing `[]`,
+    // which is what keeps a file byte-stable for a project that never
+    // touches Scene -- the same rule Swift applies to `skins`,
+    // `animationEvents` and `animations`.
+    if (!document.sceneCompositions.empty()) {
+        JsonValue::Array compositions;
+        compositions.reserve(document.sceneCompositions.size());
+        for (const SceneComposition& composition : document.sceneCompositions) {
+            compositions.push_back(toJson(composition));
+        }
+        j.set("sceneCompositions", JsonValue::makeArray(std::move(compositions)));
+        // Tied to the COMPOSITIONS, not to its own emptiness: it records
+        // where the artist was standing, and there is nowhere to stand in
+        // a project with no set.
+        if (document.sceneViewCamera.has_value()) {
+            j.set("sceneViewCamera", toJson(*document.sceneViewCamera));
+        }
+    }
+    if (document.selectedSceneCompositionID.has_value()) {
+        j.set("selectedSceneCompositionID", toJson(*document.selectedSceneCompositionID));
+    }
+
     return j;
 }
 
@@ -252,6 +280,21 @@ ProjectDocument projectDocumentFromJson(const JsonValue& j) {
             document.constraintSetupValues[constraintSetupValuesIDFromJson(entry)] =
                 constraintSetupValuesFromJson(entry);
         }
+    }
+
+    const JsonValue* compositions = j.find("sceneCompositions");
+    if (compositions != nullptr && compositions->isArray()) {
+        for (const JsonValue& composition : compositions->asArray()) {
+            document.sceneCompositions.push_back(sceneCompositionFromJson(composition));
+        }
+    }
+    const JsonValue* selected = j.find("selectedSceneCompositionID");
+    if (selected != nullptr && !selected->isNull()) {
+        document.selectedSceneCompositionID = uuidFromJson(*selected);
+    }
+    const JsonValue* viewCamera = j.find("sceneViewCamera");
+    if (viewCamera != nullptr && !viewCamera->isNull()) {
+        document.sceneViewCamera = sceneViewCameraFromJson(*viewCamera);
     }
 
     // Keep everything this port does not model yet, verbatim.

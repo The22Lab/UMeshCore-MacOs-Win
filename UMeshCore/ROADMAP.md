@@ -1593,6 +1593,74 @@ Special-case validation needs, carried over into each phase's own tests:
    information 256 times and would call two curves different over a
    rounding difference in the tabulation.
 
+   `Serialization/SavedScene.h/.cpp` then ports
+   `Data/Scene/ScenePersistence.swift` (463 L) and wires it into
+   `ProjectDocument`, closing one of the port's oldest open loops: the
+   `sceneCompositions` / `selectedSceneCompositionID` / `sceneViewCamera`
+   sections LEAVE `ProjectDocument::unrecognized` and become real fields.
+
+   That graduation is the point of the mechanism rather than an exception
+   to it. `unrecognized` is a holding pen -- it existed so a load/save
+   cycle through UMeshCore would not destroy a real project's Scene mode
+   before the model existed -- and a key leaving it is what progress looks
+   like. What must never happen is a key being BOTH modelled and
+   preserved, because it would then be written twice through two different
+   paths; `testSceneSectionsNoLongerFallIntoUnrecognized` and the package
+   test both assert it is not. `editorState` is the one section still in
+   the pen, and its end-to-end disk test still passes, now beside a new
+   one that takes a real Scene composition to disk and back.
+
+   Every compatibility concession is per FIELD and each one names the file
+   it protects:
+   - A missing `material` restores the FLAT surface. Not a neutral-looking
+     guess: `isFlat` gates a branch the shader never enters, so "renders
+     bit for bit as before" survives.
+   - A missing `sortingOrder` restores the layer's INDEX IN THE FILE.
+     Before layers had numbers the stacking WAS the array order, so the
+     index reproduces exactly the draw order the file was saved with. Zero
+     would put every card on one layer and leave the tie-break to sort
+     them -- the same order by luck, and no longer so the moment anybody
+     touched one number.
+   - A missing `lightMask` restores channel 1 and `receivesLight` true,
+     which is what makes a light added to an old scene later reach
+     anything.
+   - A `parallaxMode` this build does not know falls back to `off`, never
+     to the nearest mode: picking the nearest would render the artist a
+     scene they never composed and then let them save it back over the
+     original.
+   - A layer whose kind-specific payload is missing is DROPPED rather than
+     restored as something it never was, so a future layer type does not
+     brick an older editor -- it just does not appear.
+
+   Ranges are enforced on the way IN, not only in the inspector, so a
+   hand-edited or truncated file cannot produce a camera that divides by
+   `tan(0)`, a cone whose inner angle exceeds its outer (the smoothstep
+   between them would run backwards, which reads as a spot lit inside
+   out), or a falloff curve that ends above zero (which would draw a hard
+   circle around every lamp, reported as "the light has an edge" by
+   somebody who would never suspect the curve). One asymmetry worth
+   noticing while reading: an empty mask on a LIGHT restores to ALL
+   channels, while an empty mask on a LAYER restores to channel 1. They
+   are answering different questions -- a light that lights nothing and a
+   card no light can touch are both indistinguishable from a broken file,
+   and the safe answer differs.
+
+   An empty Scene writes NOTHING: no `sceneCompositions` key and no
+   `sceneViewCamera`, which keeps files byte-stable for every project that
+   never touches Scene mode. The view camera is tied to the COMPOSITIONS
+   rather than to its own emptiness, deliberately -- it records where the
+   artist was standing, and there is nowhere to stand in a project with no
+   set.
+
+   Two existing tests were updated rather than deleted, because both were
+   asserting the old holding-pen behaviour for these exact keys:
+   `ProjectDocumentTests`' unmodelled-key test now uses `editorState` plus
+   a synthetic future section, and `ProjectPackageTests`' disk round trip
+   does the same and gains the Scene-mode counterpart.
+
+   Tested: `tests/SavedSceneTests.cpp` (26 tests). All 44 test binaries
+   pass.
+
    Tested: `tests/SceneCompositionTests.cpp` (23 tests) -- draw order and
    its tie-break, depth reordering nothing, front-to-back being exactly
    the reverse (the two ends disagreeing is a bug this project has already

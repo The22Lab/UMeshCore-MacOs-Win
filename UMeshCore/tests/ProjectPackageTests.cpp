@@ -276,17 +276,62 @@ static void testMissingPathIsReportedNotCrashed() {
 
 static void testUnmodelledSectionsSurviveARealSaveLoadCycle() {
     // The end-to-end version of ProjectDocument's `unrecognized` test: a
-    // section this port does not model must survive going to disk and back.
+    // section this port does not model must survive going to disk and
+    // back. `editorState` is the one still in that position -- the Scene
+    // sections graduated to modelled fields in Phase 5, and the test
+    // below covers those on the same disk round trip.
     const fs::path scratch = makeScratchDir("preserve");
     ProjectDocument document;
-    document.unrecognized["sceneCompositions"] = JsonValue::parse("[{\"name\":\"Shot 1\",\"fps\":24}]");
+    document.unrecognized["editorState"] =
+        JsonValue::parse("{\"timelineZoomScale\":1.75,\"inspectorTab\":\"rig\"}");
 
     const fs::path packagePath = scratch / "Preserve.umesh";
     saveProjectPackage(document, packagePath.string());
     const ProjectDocument loaded = loadProjectPackage(packagePath.string());
 
-    UM_CHECK(loaded.unrecognized.count("sceneCompositions") == 1);
-    UM_CHECK(loaded.unrecognized.at("sceneCompositions").asArray()[0].find("fps")->asInt() == 24);
+    UM_CHECK(loaded.unrecognized.count("editorState") == 1);
+    UM_CHECK(loaded.unrecognized.at("editorState").find("inspectorTab")->asString() == "rig");
+
+    fs::remove_all(scratch);
+}
+
+static void testSceneModeSurvivesARealSaveLoadCycle() {
+    // What `unrecognized` was protecting until Phase 5 modelled it: a
+    // project's Scene mode must come back off disk intact. Now it does so
+    // as real values, which is a stronger guarantee than opaque JSON --
+    // the clamps and per-field defaults run on the way in.
+    const fs::path scratch = makeScratchDir("scene");
+    ProjectDocument document;
+    SceneComposition composition;
+    composition.id = Uuid(31, 31);
+    composition.name = "Shot 1";
+    composition.fps = 24;
+    SceneLayer layer;
+    layer.id = Uuid(32, 32);
+    layer.name = "backdrop";
+    layer.sortingOrder = 5;
+    layer.content = ScenePlateContent{Uuid(33, 33)};
+    composition.layers = {layer};
+    document.sceneCompositions = {composition};
+    document.selectedSceneCompositionID = Uuid(31, 31);
+
+    const fs::path packagePath = scratch / "Scene.umesh";
+    saveProjectPackage(document, packagePath.string());
+    const ProjectDocument loaded = loadProjectPackage(packagePath.string());
+
+    UM_CHECK(loaded.sceneCompositions.size() == 1);
+    if (loaded.sceneCompositions.size() == 1) {
+        UM_CHECK(loaded.sceneCompositions[0].name == "Shot 1");
+        UM_CHECK(loaded.sceneCompositions[0].fps == 24);
+        UM_CHECK(loaded.sceneCompositions[0].layers.size() == 1);
+        if (!loaded.sceneCompositions[0].layers.empty()) {
+            UM_CHECK(loaded.sceneCompositions[0].layers[0].sortingOrder == 5);
+        }
+    }
+    UM_CHECK(loaded.selectedSceneCompositionID == Uuid(31, 31));
+    // And it did not ALSO ride in `unrecognized`, which would write the
+    // key twice through two different paths.
+    UM_CHECK(loaded.unrecognized.count("sceneCompositions") == 0);
 
     fs::remove_all(scratch);
 }
@@ -304,4 +349,5 @@ UM_TEST_MAIN_BEGIN()
     testRuntimeExportIsRejectedByName();
     testMissingPathIsReportedNotCrashed();
     testUnmodelledSectionsSurviveARealSaveLoadCycle();
+    testSceneModeSurvivesARealSaveLoadCycle();
 UM_TEST_MAIN_END()

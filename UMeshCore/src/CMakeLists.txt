@@ -47,6 +47,7 @@ add_library(umeshcore STATIC
     Serialization/SavedAnimation.cpp
     Serialization/SavedEditorState.cpp
     Serialization/SavedGeometry.cpp
+    Serialization/SavedScene.cpp
     Serialization/SavedSceneImage.cpp
     Serialization/SavedSkeleton.cpp
     Serialization/UMJsonBuilder.cpp
