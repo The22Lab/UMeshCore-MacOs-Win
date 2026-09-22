@@ -287,22 +287,33 @@ Special-case validation needs, carried over into each phase's own tests:
    any of them true, that call is provably a no-op today, so it's omitted
    rather than stubbed.
 
-   `ToolManager` + the 8 tools are next, now unblocked on the SceneAnimator/
-   EditorScene side: each tool's manipulation math (drag deltas, snap, axis
-   constraint) is independent of them, but every tool's `onMouseDown`/
-   `onMouseUp` writes through `commitKeyframe`, `moveBoneRoot`/
+   `updateMeshVertex` (needs `Mesh::clampedPositionInsideHullIfNeeded`,
+   itself needing `hullVertexIndices`/`pointInsideHull`/
+   `pointOnHullBoundary` — not ported) is a newly-identified, `MeshTool`-
+   scoped gap, deferred alongside that tool.
+
+   The plan for unblocking `ToolManager`'s *dispatch logic* without
+   `CanvasPicking.imageHit` (still needs Phase 4/5's asset pipeline) is now
+   built and proven: `Editor/CanvasPicking.h/.cpp` ports `CanvasPicking`'s
+   arbitration rule in full (`target()`: a hit ON something beats a hit
+   NEAR something, whatever kind it is; bone wins ties) with the image
+   hit-test itself injected as an `ImageHitTestFn` callback — a platform
+   with no texture pipeline yet passes one that always returns nullopt,
+   which makes `target()` degrade to correct bone-only picking, not a stub
+   of a stub. `Editor/Tool.h` ports the `Tool` protocol (adding `hitScale`/
+   `touchOptimized` as explicit parameters, threaded the rest of the way
+   from `ToolUtilities.h`'s already-established externalization of them),
+   and `Editor/Tools/SelectTool.h/.cpp` is the first concrete tool, ported
+   and tested end to end (5 tests: image click, bone click, shift-click
+   multi-select, click-to-clear, shift-click-preserves-on-empty-canvas)
+   against this design.
+
+   `ToolManager` + the other 7 tools are next, now with a proven pattern to
+   follow: each tool's manipulation math (drag deltas, snap, axis
+   constraint) is independent of the picking gap, and every tool's
+   `onMouseDown`/`onMouseUp` writes through `commitKeyframe`, `moveBoneRoot`/
    `setImagePosition`, or the selection methods above, all of which
-   `EditorScene` now supports end to end. `updateMeshVertex` (needs
-   `Mesh::clampedPositionInsideHullIfNeeded`, itself needing
-   `hullVertexIndices`/`pointInsideHull`/`pointOnHullBoundary` — not ported)
-   is a newly-identified, `MeshTool`-scoped gap, deferred alongside that
-   tool. The other known blocker — `CanvasPicking.imageHit`'s alpha-channel
-   hit-testing, needed by `ToolManager`'s selection-click dispatch — is
-   unchanged and still needs Phase 4/5's asset/texture pipeline; the plan
-   for unblocking `ToolManager`'s *dispatch logic* (not the real pixel test)
-   without it is to inject the image-hit test as a callback the platform
-   layer supplies, the same "inject what's needed" pattern used throughout
-   this port, so `ToolManager` itself can still be ported and tested now.
+   `EditorScene` already supports end to end.
 3. **Serialization** — binary UMSH chunked format (byte-exact; the
    `.meshDeform` empty-payload gap in the current Swift writer needs an
    explicit decision before the reader is written, not a silent port-as-is —
