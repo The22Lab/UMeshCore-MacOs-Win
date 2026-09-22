@@ -22,6 +22,7 @@ add_library(umeshcore STATIC
     Render/SceneViewCamera.cpp
     Render/SceneSkinPalette.cpp
     Render/SceneGizmoMeshBuilder.cpp
+    Render/SceneLighting.cpp
     Mesh/MeshKernel.cpp
     Mesh/MeshValidator.cpp
     Mesh/Mesh.cpp

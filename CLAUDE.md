@@ -46,7 +46,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-38 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+39 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -106,7 +106,7 @@ errores reales.
 | 1 | Math + modelo de datos | ✅ Completa salvo 3 conveniencias de editor |
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
-| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 6 hechas, 3 restantes (1 descartada: código muerto)** |
+| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 7 hechas, 2 restantes (1 descartada: código muerto)** |
 | 5 | Scene compositing, luces, física secundaria, export | ⬜ No empezada |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
@@ -367,11 +367,46 @@ distintas en los dos archivos. En el builder, 0 es el anillo exterior; en
 literal del `Int` heredaría esa ambigüedad; lo correcto sería un
 `std::optional`.
 
+### Pieza 7 — hecha
+
+**`Render/SceneLighting.h/.cpp`** ← `Render/SceneLighting.swift` (544 L) +
+`LightFalloffCurve` de `Data/Scene/SceneLight.swift`. 18 tests.
+
+Dónde se resuelve la luz, que no es donde uno diría: **por capa, en espacio
+de pantalla, contra el plano de la propia capa**. En espacio de textura
+sería erróneo de forma visible — una capa puede ser un rig con sprites
+deformados, así que la posición de un téxel dice poco de dónde acaba en el
+mundo. Pero una capa Scene **es plana**, así que el rayo por un píxel corta
+su plano en un punto exacto. Una retícula por capa, no por sprite.
+
+La retícula se elige de la **banda de fade**, no del radio: la banda es
+donde está la curvatura; fuera de ella el campo es plano o cero y la
+interpolación es exacta.
+
+**Primera cifra de un harness ausente que sí se pudo reproducir.** El
+header Swift dice que `0.5 + (x - 0.5) * 1.0` mueve **3 327 de 20 001**
+muestras, hasta **1.5e-08** — por eso `contrast == 0` toma una rama. El
+test lo recalcula en la misma malla y sale exactamente 3327 y 1.49e-08.
+Las dos ramas neutras parecen la misma regla y no lo son: `smoothness == 0`
+no cambia ningún bit (está para ahorrar trabajo), `contrast == 0` **sí**.
+
+También se cierra el `init` diferido de `SceneLightUniform`: los enums de
+matemática (`SceneLightKind`/`SceneLightBlend`) y su `switch` explícito
+hacia los códigos de cable viven aquí. Nunca un cast.
+
+**No portado**: `LightField::composite(from:into:)` — lee un bitmap de
+CoreGraphics y escribe otro; **es** el rasterizador CPU que esta fase
+deliberadamente no cruza. Su aritmética no se pierde: es lo que hace el
+fragment shader y queda escrita en el header para la pieza 9
+(`lit = clamp(src*factor + additive*srcAlpha, 0, srcAlpha)`; el término
+aditivo se escala por alfa porque se suma a la **superficie**, que solo
+existe donde hay alfa — plano, encendería el margen transparente de cada
+sprite).
+
 ### Pendiente, en orden de dependencia
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 7 | Matemática de luces | `Render/SceneLighting.swift` | 544 | Solapa con Fase 5: portar la *matemática*, no el modelo `SceneLight`. |
 | 8 | Presupuesto de frame | `Render/SceneRenderBudget.swift` | 174 | |
 | 9 | Shader math de referencia | `Render/SceneGPU/SceneShaders.metal` | 1022 | Autorar **una vez** en C++ y transcribir a MSL y HLSL con cross-check numérico (ROADMAP Riesgo #5). |
 

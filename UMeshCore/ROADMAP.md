@@ -1280,8 +1280,69 @@ Special-case validation needs, carried over into each phase's own tests:
    of the `Int` would inherit that ambiguity; the right shape in C++ is an
    `std::optional`.
 
-   **Not yet started**: lighting math, the frame budget, the reference
-   shader math, and the Metal/DirectX backends themselves.
+   `Render/SceneLighting.h/.cpp` ports `Render/SceneLighting.swift`, plus
+   `LightFalloffCurve` out of `Data/Scene/SceneLight.swift` (that file is
+   Phase 5's model, but the curve is math, and it is evaluated through
+   `AnimationCurve` -- the editor's one curve authority -- so lighting has
+   no Bezier code of its own on either side).
+
+   Lighting resolves per LAYER, in SCREEN space, against the layer's own
+   plane, and the Swift header explains why that is not where one would
+   guess: in texture space a rig instance's mesh-deformed sprite would
+   carry the lighting of where the arm was drawn flat, because a texel's
+   position says little about where it lands in the world. A Scene layer is
+   flat by the model's founding invariant, so the ray through a pixel meets
+   its plane in one exact point -- one lattice per layer rather than one
+   per sprite. The lattice spacing comes from the light's FADE BAND, never
+   its radius: the band is where the curvature is, and everywhere else the
+   field is flat or zero and interpolation is exact.
+
+   **A cited-but-missing harness figure was reproduced here for the first
+   time in this port.** The Swift header justifies the `contrast == 0`
+   branch by measuring that `0.5 + (x - 0.5) * 1.0` moves 3327 of 20 001
+   samples, by up to 1.5e-08. The C++ test recomputes that on the same grid
+   and gets exactly 3327 and 1.49e-08. It holds because both sides are
+   float32, which is this port's founding premise about its math library.
+   The neighbouring `smoothness == 0` branch looks like the same rule and
+   is not: `(d + 0) / (1 + 0)` is exactly `d` in IEEE 754, so that branch
+   exists only to skip work. The Swift header records that treating the two
+   as one rule is how its own harness first got written wrong.
+
+   This also closes the `SceneLightUniform` initializer deferred in the GPU
+   types: the math enums (`SceneLightKind`, `SceneLightBlend`) and the
+   explicit switch that maps them onto the wire codes live here, so the
+   rule "map with a switch, never a cast" now has an implementation rather
+   than only a comment.
+
+   Not ported: `LightField.composite(from:into:)`. It reads a CoreGraphics
+   bitmap and writes another -- it IS the CPU rasterizer this phase
+   deliberately does not carry across. Its arithmetic is not lost, because
+   it is what the fragment shader does, and it is written into the header
+   for Phase 4's last piece:
+   `lit = clamp(src * factor + additive * srcAlpha, 0, srcAlpha)` then
+   `dst = lit + dst * (1 - srcAlpha)`. The additive term is scaled by alpha
+   because it is added to the SURFACE, which only exists where there is
+   alpha; added flat, an additive light lights up the transparent margin of
+   every sprite and surrounds its subject with a rectangle of glow.
+
+   Tested: `tests/SceneLightingTests.cpp` (18 tests) -- the drift
+   measurement above, smoothness wrapping the terminator rather than
+   blurring, attenuation flat inside the inner radius and zero past the rim
+   with a monotone band, `depthInfluence` being the only mention of Z (0
+   lights a layer a thousand units back as though it sat at the light's own
+   depth, 1 puts it out of reach), a spot compared as cosines and
+   smoothstepped between its cones, a light set flat staying flat however a
+   surface's material is set, each blend routing where the design says
+   (`multiply` can only take light away, and only where it reaches;
+   `screen` cannot overshoot), the falloff presets matching the closed
+   forms their comments claim (flat tangents give exactly 1 - 3u^2 + 2u^3;
+   chord tangents give exactly 1 - u), the lattice density coming from the
+   band rather than the radius, a missed ray getting ambient rather than a
+   hole, and bilinear sampling being exact on a linear field. All 39 test
+   binaries pass.
+
+   **Not yet started**: the frame budget and the reference shader math (and
+   the Metal/DirectX backends themselves, which are Phase 6).
 5. **Scene compositing / lighting / physics secondary motion / export** —
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)
