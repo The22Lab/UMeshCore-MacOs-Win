@@ -596,6 +596,50 @@ static void testApplyAnimationsSetupModeRestoresBasePoseAndReturnsDrawOrder() {
     UM_CHECK(!result.animatedDrawOrder.has_value());
 }
 
+static void testLocalSpritePoseIsExactInverseOfBoundImagePose() {
+    // A rotated+translated bone; a sprite sitting at a world pose. Converting
+    // that world pose into the bone's local space with localSpritePose, then
+    // placing the result back on the bone with boundImagePose, must return
+    // exactly the original world pose -- the whole point of "binding a
+    // sprite never changes what's on screen."
+    Skeleton skeleton;
+    Bone bone = Bone::makeRoot("bone", Vec2(50, 20), Vec2(150, 20));
+    skeleton.setBone(bone);
+    skeleton.rootIDs.push_back(bone.id);
+
+    SceneImage image;
+    image.id = Uuid::generate();
+    image.animationClip = AnimationClip("sprite");
+    image.position = Vec2(80, 45);
+    image.rotation = 0.3f;
+    image.scale = Vec2(1.2f, 0.9f);
+    image.skew = Vec2(5.0f, 0.0f);
+
+    const SceneImageAnimationPose local = localSpritePose(skeleton, image, bone.id);
+    const Mat4 worldMatrix = *skeleton.worldMatrix(bone.id);
+    const SceneImageAnimationPose roundTripped = boundImagePose(local, worldMatrix);
+
+    UM_CHECK_NEAR(roundTripped.position.x, image.position.x, 1e-2);
+    UM_CHECK_NEAR(roundTripped.position.y, image.position.y, 1e-2);
+    UM_CHECK_NEAR(roundTripped.rotation, image.rotation, 1e-3);
+    UM_CHECK_NEAR(roundTripped.scale.x, image.scale.x, 1e-3);
+    UM_CHECK_NEAR(roundTripped.scale.y, image.scale.y, 1e-3);
+}
+
+static void testLocalSpritePoseWithNoBoneReturnsWorldPoseUnchanged() {
+    Skeleton skeleton;
+    SceneImage image;
+    image.id = Uuid::generate();
+    image.animationClip = AnimationClip("sprite");
+    image.position = Vec2(7, 8);
+    image.rotation = 0.1f;
+
+    const SceneImageAnimationPose local = localSpritePose(skeleton, image, std::nullopt);
+    UM_CHECK_NEAR(local.position.x, 7.0, 1e-5);
+    UM_CHECK_NEAR(local.position.y, 8.0, 1e-5);
+    UM_CHECK_NEAR(local.rotation, 0.1, 1e-5);
+}
+
 UM_TEST_MAIN_BEGIN()
     testUnanimatedBoneKeepsBasePose();
     testAnimatedBoneSamplesTranslateTrack();
@@ -626,4 +670,6 @@ UM_TEST_MAIN_BEGIN()
     testCommitMeshDeformKeyframeCapturesCurrentDeform();
     testApplyAnimationsAnimateModeSamplesBoneAndSprite();
     testApplyAnimationsSetupModeRestoresBasePoseAndReturnsDrawOrder();
+    testLocalSpritePoseIsExactInverseOfBoundImagePose();
+    testLocalSpritePoseWithNoBoneReturnsWorldPoseUnchanged();
 UM_TEST_MAIN_END()

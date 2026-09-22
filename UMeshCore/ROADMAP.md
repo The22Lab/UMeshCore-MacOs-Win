@@ -250,14 +250,59 @@ Special-case validation needs, carried over into each phase's own tests:
    `solveRigPose`/`rigPose(atFrame:)` (point-sampling a rig at an arbitrary
    frame for a Scene-compositing instance without touching the live scene)
    remain unported from the animation-evaluation side — Phase 5 scope.
-   `ToolManager` + the 8 tools are next, now unblocked on the SceneAnimator
-   side: each tool's manipulation math (drag deltas, snap, axis constraint)
-   is independent of it, but every tool's `onMouseDown`/`onMouseUp` writes
-   through `commitKeyframe` or straight to the base pose, both of which this
-   file now supports end to end. The other blocker from this section's
-   first paragraph — `CanvasPicking.imageHit`'s alpha-channel hit-testing,
-   needed by `ToolManager`'s selection-click dispatch — is unchanged and
-   still needs Phase 4/5's asset/texture pipeline.
+   `SceneAnimator` also gained `localSpritePose` (converts a sprite's
+   current visible/world pose into a bone's local space — the exact inverse
+   of `boundImagePose`, and round-trip-tested against it), needed by the
+   `Editor/EditorScene.h` work below.
+
+   *`EditorScene`: started.* Rather than attempt a full `SceneManager` port
+   in one pass (see Risk #1), built the minimal Scene aggregate the plan
+   called for: `Editor/EditorScene.h`, a single header-only class carrying
+   exactly what `ToolManager`/the 8 tools need — the sprite list, skeleton,
+   scene-wide clip/constraint-setup bookkeeping, animation transport state,
+   the full selection state machine (`setSelection`/`clearSelection`/
+   `selectBone`/`toggleBoneSelection`/`setBoneSelection`/`selectMeshLayer`/
+   `selectMeshVertices`, `selectedBonesInChainOrder`/`InDepthOrder`), drag
+   preview (`setPreviewPosition`/`clearPreviewPosition`/`renderPose`),
+   sprite/bone transform mutators (`setImagePosition`/`Rotation`/`Scale`/
+   `Skew`/`Rotation3D`, `moveBoneRoot`/`moveBoneTip`/`setBoneRotation`/
+   `setBoneLength`), undo/redo (`beginInteraction`/`endInteraction`/
+   `undo`/`redo`, one-push-per-gesture), and thin wrappers over
+   `SceneAnimator`'s `commitKeyframe`/`commitMeshDeformKeyframe`/
+   `applyAnimations`. All ported 1:1 from the corresponding
+   `SceneManager.swift` methods and tested (13 tests covering selection,
+   drag preview, sprite/bone mutators in both Editor and Animate mode, and
+   undo/redo including the one-push-per-gesture guard).
+
+   Deliberately not yet in `EditorScene`, documented in its file header,
+   because nothing in this port sets or reads them yet: timeline
+   multi-selection (`selectedKeyframes`/`selectedKeyframe`), the IK-chain
+   builder's draft state, and Bind Mode/weight paint/mesh-edit mode
+   (`meshWeightPaintEnabled`/`isMeshEditEnabled`/`isBindingBonesMode`/
+   `pendingCanvasMode`/`meshEditNotice`) — each is its own subsystem to
+   port when the tool that needs it (`MeshTool`, `BoneTool`) is reached, not
+   corner-cut now. One consequence, also documented: Swift's
+   `boneSelectionBecameNonEmpty()` calls `leaveSpriteModes()`, which reads
+   exactly those deferred flags; since none of this port's code can yet set
+   any of them true, that call is provably a no-op today, so it's omitted
+   rather than stubbed.
+
+   `ToolManager` + the 8 tools are next, now unblocked on the SceneAnimator/
+   EditorScene side: each tool's manipulation math (drag deltas, snap, axis
+   constraint) is independent of them, but every tool's `onMouseDown`/
+   `onMouseUp` writes through `commitKeyframe`, `moveBoneRoot`/
+   `setImagePosition`, or the selection methods above, all of which
+   `EditorScene` now supports end to end. `updateMeshVertex` (needs
+   `Mesh::clampedPositionInsideHullIfNeeded`, itself needing
+   `hullVertexIndices`/`pointInsideHull`/`pointOnHullBoundary` — not ported)
+   is a newly-identified, `MeshTool`-scoped gap, deferred alongside that
+   tool. The other known blocker — `CanvasPicking.imageHit`'s alpha-channel
+   hit-testing, needed by `ToolManager`'s selection-click dispatch — is
+   unchanged and still needs Phase 4/5's asset/texture pipeline; the plan
+   for unblocking `ToolManager`'s *dispatch logic* (not the real pixel test)
+   without it is to inject the image-hit test as a callback the platform
+   layer supplies, the same "inject what's needed" pattern used throughout
+   this port, so `ToolManager` itself can still be ported and tested now.
 3. **Serialization** — binary UMSH chunked format (byte-exact; the
    `.meshDeform` empty-payload gap in the current Swift writer needs an
    explicit decision before the reader is written, not a silent port-as-is —

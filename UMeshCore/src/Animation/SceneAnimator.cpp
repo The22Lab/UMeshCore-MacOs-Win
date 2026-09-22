@@ -89,6 +89,33 @@ void convertImageAnimationSpace(
     }
 }
 
+SceneImageAnimationPose localSpritePose(
+    const Skeleton& skeleton, const SceneImage& image, std::optional<Uuid> boneID) {
+    const std::optional<Mat4> worldMatrix = boneID.has_value() ? skeleton.worldMatrix(*boneID) : std::nullopt;
+    if (!worldMatrix.has_value()) {
+        return SceneImageAnimationPose{image.position, image.scale, image.rotation, image.skew};
+    }
+
+    const Mat4 inv = inverse(*worldMatrix);
+    const Vec3 local3 = MatrixUtilities::transformPoint(Vec3(image.position.x, image.position.y, 0), inv);
+    const MatrixUtilities::Axes worldAxes =
+        MatrixUtilities::shearedAxes(image.rotation * 180.0f / kPi, image.skew, image.scale);
+    const Vec2 invX(inv.columns[0].x, inv.columns[0].y);
+    const Vec2 invY(inv.columns[1].x, inv.columns[1].y);
+    const Vec2 localX = invX * worldAxes.x.x + invY * worldAxes.x.y;
+    const Vec2 localY = invX * worldAxes.y.x + invY * worldAxes.y.y;
+
+    const auto decomposed = MatrixUtilities::decomposeTransform(localX, localY, image.skew.y);
+    if (!decomposed.has_value()) {
+        const auto worldRotation = skeleton.worldRotation(*boneID);
+        return SceneImageAnimationPose{
+            Vec2(local3.x, local3.y), image.scale,
+            image.rotation - (worldRotation.has_value() ? *worldRotation : 0.0f), image.skew};
+    }
+    return SceneImageAnimationPose{
+        Vec2(local3.x, local3.y), decomposed->scale, decomposed->rotationRadians, decomposed->skewDegrees};
+}
+
 void ensureImageAnimationSpaceConsistency(const Skeleton& skeleton, SceneImage& image) {
     const TransformAnimationSpace expectedSpace = image.boneBinding.has_value()
         ? TransformAnimationSpace::boneLocal(image.boneBinding->boneID)

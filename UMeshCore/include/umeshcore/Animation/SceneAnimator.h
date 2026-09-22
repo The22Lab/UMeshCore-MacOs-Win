@@ -124,6 +124,19 @@ void convertImageAnimationSpace(
 // first in the pose pass because it can itself change structure.
 void ensureImageAnimationSpaceConsistency(const Skeleton& skeleton, SceneImage& image);
 
+// Converts `image`'s CURRENT (visible/world) pose into the local space of
+// `boneID` (or leaves it in world space when `boneID` is nullopt), the
+// exact inverse of `boundImagePose`: the position is mapped through the
+// inverse world matrix and the basis axes through the inverse 2x2 linear
+// part, then decomposed back into rotation/scale/skew. A sprite mutator
+// (`setImagePosition` and friends) calls this right after writing the
+// visible pose so the sprite's AUTHORED value (or its bone-binding's local
+// pose) stays in sync -- binding a sprite, or moving a bound one, therefore
+// never changes what's on screen, even under a scaled, flipped, or sheared
+// bone.
+SceneImageAnimationPose localSpritePose(
+    const Skeleton& skeleton, const SceneImage& image, std::optional<Uuid> boneID);
+
 // A bound sprite's world pose: the bone's world matrix applied to the
 // sprite's local pose, decomposed back into the sprite transform
 // convention. Extracted as its own function (mirroring the Swift source)
