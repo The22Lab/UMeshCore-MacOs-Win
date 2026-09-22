@@ -106,7 +106,7 @@ errores reales.
 | 1 | Math + modelo de datos | ✅ Completa salvo 3 conveniencias de editor |
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
-| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 6 de ~9 piezas** |
+| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 6 hechas, 3 restantes (1 descartada: código muerto)** |
 | 5 | Scene compositing, luces, física secundaria, export | ⬜ No empezada |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
@@ -334,11 +334,43 @@ planos, ejes y anillos. El test lo afirma como propiedad de **prefijo**
 (añadir una capa encima nunca mueve lo de abajo) y comprueba que barajar el
 layout no cambia un solo vértice.
 
+### Pieza 6 (geometría auxiliar) — NO se porta: código muerto demostrable
+
+`ArcGeometryBuilder.swift` (152), `SphereGeometryBuilder.swift` (140),
+`ArcMath.swift` (86) y `ArcHitTest.swift` (97) son el gizmo de rotación
+**3D de arcos** — una implementación anterior, superada. Verificado por
+grep, no por lectura:
+
+- `ArcGeometryBuilder` y `SphereGeometryBuilder`: **cero** referencias
+  fuera de sus propios archivos, en todo el proyecto (`.swift` y `.metal`).
+- `ArcMath` solo lo usan esos dos y `ArcHitTest`.
+- `ArcHitTest` solo lo usan `updateRotationHover` y
+  `handleRotationMouseDown` de `ToolManager` — que son **dos de los cuatro
+  métodos de rotación-hover que este port ya había descartado** por tener
+  cero call sites (convención #3, arriba). Es la misma pista, llegando dos
+  veces desde lados opuestos.
+
+Lo que sí está vivo es otro gizmo: `GizmoRenderer.rotateGizmoVertices` /
+`skewGizmoVertices` (anillo 2D + aguja), que `MetalRenderer` sí llama y
+cuyo hit-testing es `ToolUtilities` → `.rotateRing` / `.skewEdge`, ya
+portado en Fase 2. Portar los arcos habría añadido ~475 líneas de un
+manipulador que la app no dibuja ni testea.
+
+Si alguna vez se recupera ese diseño, el detalle que merece rescatarse es
+que `ArcMath` era la copia **única** que compartían dibujo y hit-test — la
+propiedad que este port persigue en todas partes.
+
+Trampa registrada para ese caso: el índice de arco significa cosas
+distintas en los dos archivos. En el builder, 0 es el anillo exterior; en
+`ArcHitTest`, 0 es **"no hay hit"** y el anillo exterior es 4
+(`RotationGizmoState.mouseDown` hace `guard hitArc > 0`). Un port
+literal del `Int` heredaría esa ambigüedad; lo correcto sería un
+`std::optional`.
+
 ### Pendiente, en orden de dependencia
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 6 | Geometría auxiliar | `ArcGeometryBuilder.swift` (152) + `SphereGeometryBuilder.swift` (140) | 292 | |
 | 7 | Matemática de luces | `Render/SceneLighting.swift` | 544 | Solapa con Fase 5: portar la *matemática*, no el modelo `SceneLight`. |
 | 8 | Presupuesto de frame | `Render/SceneRenderBudget.swift` | 174 | |
 | 9 | Shader math de referencia | `Render/SceneGPU/SceneShaders.metal` | 1022 | Autorar **una vez** en C++ y transcribir a MSL y HLSL con cross-check numérico (ROADMAP Riesgo #5). |

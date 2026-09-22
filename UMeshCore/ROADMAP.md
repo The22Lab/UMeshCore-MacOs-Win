@@ -1250,9 +1250,38 @@ Special-case validation needs, carried over into each phase's own tests:
    ARTIST'S radius, unscaled by the gizmo's screen-constant scale -- only
    its tube's girth comes from that. All 38 test binaries pass.
 
-   **Not yet started**: the auxiliary geometry builders, lighting math, the
-   frame budget, the reference shader math, and the Metal/DirectX backends
-   themselves.
+   **The auxiliary geometry builders are NOT being ported, and that is a
+   finding rather than a deferral.** `ArcGeometryBuilder.swift` (152),
+   `SphereGeometryBuilder.swift` (140), `ArcMath.swift` (86) and
+   `ArcHitTest.swift` (97) are a 3D arc-sphere rotation gizmo that nothing
+   reaches. Verified by grep, not by reading: the two builders have ZERO
+   references anywhere outside their own files (across `.swift` and
+   `.metal` both); `ArcMath` is used only by those two and by `ArcHitTest`;
+   and `ArcHitTest`'s only call sites are `ToolManager.updateRotationHover`
+   and `handleRotationMouseDown` -- two of the four rotation-hover methods
+   this port had ALREADY established as dead when BoneTool landed. The same
+   evidence arrived twice from opposite directions.
+
+   What is live is a different gizmo: `GizmoRenderer.rotateGizmoVertices`
+   and `skewGizmoVertices` (a 2D ring, dot track and needle), which
+   `MetalRenderer` calls and whose hit testing goes through
+   `ToolUtilities` -> `.rotateRing` / `.skewEdge`, ported in Phase 2.
+   Porting the arcs would have added ~475 lines of a manipulator the app
+   neither draws nor tests, and every future reader would have had to work
+   out why two rotation gizmos existed.
+
+   Two things worth recording in case that design is ever revived. First,
+   `ArcMath` was the SINGLE shared copy behind both the drawing and the hit
+   test -- the property this port chases everywhere else, and the reason
+   these files are worth reviving rather than rewriting. Second, a trap:
+   the arc index means different things in the two files. In the builders 0
+   is the outer ring; in `ArcHitTest` 0 is "no hit" and the outer ring is 4
+   (`RotationGizmoState.mouseDown` guards on `hitArc > 0`). A literal port
+   of the `Int` would inherit that ambiguity; the right shape in C++ is an
+   `std::optional`.
+
+   **Not yet started**: lighting math, the frame budget, the reference
+   shader math, and the Metal/DirectX backends themselves.
 5. **Scene compositing / lighting / physics secondary motion / export** —
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)
