@@ -112,7 +112,6 @@ IKConstraint ikConstraintFromJson(const JsonValue& j) {
     return c;
 }
 
-namespace {
 const char* pathSpacingModeName(PathSpacingMode m) {
     switch (m) {
         case PathSpacingMode::Length: return "length";
@@ -144,7 +143,6 @@ PathRotateMode pathRotateModeFromName(const std::string& name) {
     if (name == "chainScale") return PathRotateMode::ChainScale;
     return PathRotateMode::Tangent; // unknown/absent falls back like Swift's `?? .tangent`.
 }
-} // namespace
 
 JsonValue toJson(const PathConstraint& c) {
     JsonValue j = JsonValue::makeObject();
@@ -244,7 +242,6 @@ TransformConstraint transformConstraintFromJson(const JsonValue& j) {
     return c;
 }
 
-namespace {
 const char* physicsTypeName(PhysicsType t) {
     switch (t) {
         case PhysicsType::Spring: return "spring";
@@ -263,7 +260,6 @@ PhysicsType physicsTypeFromName(const std::string& name) {
     if (name == "cloth") return PhysicsType::Cloth;
     return PhysicsType::Spring; // unknown/absent falls back like Swift's `?? .spring`.
 }
-} // namespace
 
 JsonValue toJson(const PhysicsSettings& s) {
     JsonValue j = JsonValue::makeObject();

@@ -892,10 +892,88 @@ Special-case validation needs, carried over into each phase's own tests:
    these four sections now round-trip as real values with `unrecognized`
    empty. All 31 test binaries pass.
 
-   **Not yet started**: the UMJSON document builder, which is a
-   fully separate model from `Saved*` (see the JSON-foundation entry
-   above) and needs its own pass once the rig/mesh/animation JSON pieces
-   above exist to draw from.
+   **UMJSON: done -- Phase 3's last piece.**
+   `Serialization/UMJsonModel.h` ports `Export/JSON/UMJSONModel.swift` (the
+   ~25 document structs) and `Serialization/UMJsonBuilder.h/.cpp` ports
+   `UMJSONExportBuilder.swift`. This is a FULLY separate model from
+   `Saved*`, deliberately, and the differences are the point rather than
+   inconsistency: IDs are strings (the consumer is not Swift or C++ and
+   should not need a UUID type to read a rig), vectors are flat `[Float]`
+   arrays, interpolation is spelled "stepped" rather than "hold", and units
+   are preserved per-field rather than normalized -- a BONE's rotation and
+   shear are radians while a SPRITE's rotation is radians but its shear is
+   DEGREES, which is the editor's own internal asymmetry
+   (`Transform3D2D` vs `MatrixUtilities::shearedAxes`) and is kept so a
+   runtime reproduces the rig with zero conversion drift.
+
+   Like the binary export format, UMJSON is WRITE-ONLY in Swift (confirmed
+   by grep: no decoder or importer type exists anywhere), so this port
+   provides a builder and a writer, not a reader.
+
+   Determinism is structural, not incidental: bones go out in DFS order
+   from the declared roots with children sorted by id (plus any orphan,
+   also sorted), every map-derived collection is sorted by a stable key,
+   and float rounding goes through one choke point. Exporting an unchanged
+   project twice yields identical text -- the sole exception being
+   `exportDate`, a timestamp by definition, same as the binary META
+   chunk's.
+
+   Both options carry real behavior and are ported with it:
+   - `nonessentialData` (default true): when FALSE, values only the editor
+     needs are stripped -- bone colors, the setup draw order, atlas region
+     names, the 3D `depth` block, the project name.
+   - `animationCleanUp` (default false): removes keys that provably cannot
+     change what is rendered, and only those. Rule 1 drops a constant,
+     curve-free track ONLY when its value equals the SETUP value; when the
+     constant differs the track is KEPT, because dropping it would silently
+     re-pose the rig (a bone held at 45 degrees would export flat at 0) --
+     visible corruption, not cleanup. Rule 2 drops the interior keys of an
+     equal-value run, keeping the endpoints so the hold's timing survives
+     exactly. Keys carrying Bezier tangents are never dropped, since their
+     handles shape the curve into and out of neighbours even when values
+     match.
+
+   Two smaller faithful details worth recording: a mesh-deform key never
+   claims "bezier" even when the source keyframe is Bezier, because the
+   editor's deform sampler never consults tangents and claiming otherwise
+   would be a lie the runtime could act on; and a deform key whose vertex
+   count disagrees with the mesh is dropped, because the editor ignores
+   such keys at playback, so exporting them would hand the runtime data the
+   editor itself would never show.
+
+   One documented gap: `embedTextures` does not base64-embed. The asset
+   record carries a path, not bytes, and embedding needs a base64 encoder
+   plus file reads that belong with the caller. The option is honored by
+   leaving `embedded` false and writing the path reference rather than
+   silently pretending it embedded.
+
+   The three constraint enum name tables (`PathSpacingMode`,
+   `PathRotateMode`, `PhysicsType`) moved out of `SavedSkeleton.cpp`'s
+   anonymous namespace into its header, since UMJSON writes the same
+   `rawValue` spellings -- one vocabulary, two formats, rather than two
+   copies that can drift.
+
+   Tested: `tests/UMJsonTests.cpp` (18 tests) -- header/metadata,
+   nonessential stripping in both directions, deterministic bone order with
+   the root flagged, the depth block appearing only for real depth, neutral
+   tint and normal blend being omitted, bound attachments reporting
+   boneLocal space, mesh flattening with skinning omitted when unweighted
+   and sorted when weighted, skin slots keeping "deliberately empty"
+   distinguishable from "not described" (an explicit null in the text),
+   "stepped" not "hold", deform keys being absolute and never Bezier,
+   mismatched deform keys dropped, both cleanup rules including the
+   keep-when-off-setup guard and the never-drop-a-Bezier-key guard,
+   constraint/event/drawOrder timelines in their own sections with unset
+   event overrides staying absent, rendered text parsing and being
+   byte-stable across two renders, and float precision rounding. All 32
+   test binaries pass.
+
+   **Phase 3 is complete** for everything not blocked by a later phase.
+   What remains deferred, each documented above: the binary `writeScenesChunk`
+   and the manifest's Scene-compositing sections (Phase 5's
+   `SceneComposition` model), `SavedEditorState`'s UI scalars (platform
+   shell, preserved verbatim rather than modelled), and UMJSON's base64
+   texture embedding.
 4. **Shared render geometry layer** — platform-agnostic geometry building/
    batching/culling/projection/lighting math, exposed as POD vertex/uniform
    buffers consumed by thin Metal and DirectX 11/12 backends. Target the

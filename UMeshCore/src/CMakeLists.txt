@@ -39,6 +39,7 @@ add_library(umeshcore STATIC
     Serialization/SavedGeometry.cpp
     Serialization/SavedSceneImage.cpp
     Serialization/SavedSkeleton.cpp
+    Serialization/UMJsonBuilder.cpp
 )
 
 target_include_directories(umeshcore

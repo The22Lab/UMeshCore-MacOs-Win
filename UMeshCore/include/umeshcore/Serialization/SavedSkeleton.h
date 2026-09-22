@@ -30,6 +30,17 @@
 
 namespace umeshcore {
 
+// Swift's `rawValue` spellings for the constraint enums. Shared rather
+// than duplicated because UMJSON writes the same strings (its builder
+// reads `spacingMode.rawValue` too) -- one vocabulary, two formats.
+// `...FromName` falls back the way Swift's `?? .default` does.
+const char* pathSpacingModeName(PathSpacingMode mode);
+PathSpacingMode pathSpacingModeFromName(const std::string& name);
+const char* pathRotateModeName(PathRotateMode mode);
+PathRotateMode pathRotateModeFromName(const std::string& name);
+const char* physicsTypeName(PhysicsType type);
+PhysicsType physicsTypeFromName(const std::string& name);
+
 JsonValue toJson(const Bone& bone);
 Bone boneFromJson(const JsonValue& j);
 
