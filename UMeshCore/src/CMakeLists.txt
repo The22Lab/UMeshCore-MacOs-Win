@@ -31,6 +31,8 @@ add_library(umeshcore STATIC
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp
     Serialization/ProjectDocument.cpp
+    Serialization/ProjectPackage.cpp
+    Serialization/Sha256.cpp
     Serialization/SavedAnimation.cpp
     Serialization/SavedGeometry.cpp
     Serialization/SavedSceneImage.cpp

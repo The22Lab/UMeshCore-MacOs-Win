@@ -788,13 +788,63 @@ Special-case validation needs, carried over into each phase's own tests:
    old-shaped file decoding with every optional section empty. All 29 test
    binaries pass.
 
-   **Not yet started**: the package layer around the manifest -- the
-   `.umesh` directory itself, its `Assets/` folder, and the SHA-256 content
-   deduplication that writes identical PNGs once (the manifest is ready for
-   it; that layer is file I/O plus a hash, no model work); the bucket-2
-   types with no UMeshCore port yet (`TextureAsset` beyond `AssetRecord`,
-   `HierarchyItem`, `NamedAnimation`, `CameraState`); and the UMJSON
-   document builder, which is a
+   **The package layer: done -- the native project format now round-trips
+   through a real directory on disk.** `Serialization/ProjectPackage.h/.cpp`
+   ports `save`/`load`/`makeProjectFileWrapper`/`makeBundledAssets`/
+   `resolvingAssetPaths`, producing Swift's exact on-disk shape: a
+   `MyProject.umesh/` DIRECTORY (not an archive) holding `project.json`
+   plus an `Assets/` folder of `N-Name.ext` files. Swift builds it with
+   `FileWrapper`; this port uses `std::filesystem`, and both write
+   atomically -- the package is assembled beside the destination and moved
+   into place, so a failure partway through cannot leave the previous
+   project half-overwritten.
+   - **Content deduplication** matches Swift's reasoning, not just its
+     mechanics: identical source bytes are written once and every asset
+     sharing them points at that one file. The Swift comment explains why
+     it exists even though importing already dedupes -- a project made
+     BEFORE that dedupe does carry duplicates, and re-saving it should not
+     carry them forward.
+   - **Three things share the `.umesh` extension**, so the reader sniffs
+     before parsing: a package (directory with a manifest), a legacy flat
+     manifest file with its images as siblings (still supported, as in
+     Swift), and a Unity RUNTIME EXPORT -- the chunked binary format from
+     the first half of this phase, whose first four bytes are `UMSH`.
+     Swift added that check because letting an export reach the JSON
+     decoder produced "the data couldn't be read because it isn't in the
+     correct format": true, useless, and indistinguishable from a corrupt
+     project. This port reports it by name for the same reason.
+   - One small correctness improvement over the Swift original, documented
+     in place: Swift decides "is this path absolute" with
+     `path.hasPrefix("/")`, which is POSIX-only. This port asks
+     `std::filesystem` instead, so a Windows `C:\...` path in a manifest is
+     also left alone rather than being appended to the project root.
+
+   `Serialization/Sha256.h/.cpp` is the hash that dedup needs, implemented
+   here for the same "no external dependencies" reason as the math library,
+   test harness and JSON module -- Swift reaches for `CryptoKit.SHA256`,
+   which has no portable equivalent. Nothing here is security-sensitive
+   (it is content addressing, not a credential check), but it is the real
+   FIPS 180-4 algorithm, so digests agree with Swift's for the same bytes.
+
+   Tested: `tests/ProjectPackageTests.cpp` (12 tests, the first in this
+   port to touch the filesystem -- each works under a unique temp directory
+   and cleans up after itself). SHA-256 is checked against the published
+   NIST vectors (including the million-'a' case and the 55/56/64-byte
+   padding boundaries) rather than against this port's own output. The
+   package tests cover the written directory layout, dedup collapsing two
+   identical files into one, filename sanitization, a full save/load cycle
+   through disk resolving relative asset paths back to real existing files,
+   save-over-existing replacing rather than merging (and leaving no staging
+   directory behind), the legacy flat-file shape resolving against the
+   file's parent, absolute paths being left alone, a runtime export being
+   rejected by name, a missing path being reported rather than crashing,
+   and -- end to end this time -- an unmodelled section surviving a real
+   save/load cycle. All 30 test binaries pass.
+
+   **Not yet started**: the bucket-2 types with no UMeshCore port yet
+   (`TextureAsset` beyond `AssetRecord`, `HierarchyItem`, `NamedAnimation`,
+   `CameraState`), which are what `ProjectDocument::unrecognized` is
+   currently holding verbatim; and the UMJSON document builder, which is a
    fully separate model from `Saved*` (see the JSON-foundation entry
    above) and needs its own pass once the rig/mesh/animation JSON pieces
    above exist to draw from.
