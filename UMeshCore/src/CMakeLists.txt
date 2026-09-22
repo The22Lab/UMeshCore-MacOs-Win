@@ -39,6 +39,7 @@ add_library(umeshcore STATIC
     Editor/Tools/SkewTool.cpp
     Editor/Tools/RotateTool.cpp
     Editor/Tools/BoneTool.cpp
+    Editor/Tools/PhysicsPreviewTool.cpp
     Editor/ToolManager.cpp
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp

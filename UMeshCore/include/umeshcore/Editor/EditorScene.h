@@ -92,6 +92,21 @@ public:
     // state, matching `SceneManager.setBoneCreationPreview`.
     std::optional<Vec2> boneCreationPreviewStart;
     std::optional<Vec2> boneCreationPreviewEnd;
+
+    // Temporary world-position overrides written by `PhysicsPreviewTool`
+    // while a bone is being dragged.
+    //
+    // NOTHING READS THIS, HERE OR IN SWIFT, and that is not a gap in the
+    // port. `PhysicsPreviewTool`'s own doc comment claims
+    // `baseWorldMatrices()` reads the overrides to feed rest targets into
+    // the solver; it does not. Verified by grep over the whole Swift
+    // source: `physicsPreviewOverrides` has exactly three mentions -- its
+    // declaration and the two `SceneManager` methods that write it -- and
+    // `baseWorldMatrices` never consults it. The feature is unfinished on
+    // the Swift side, not lost in translation, so the field exists with
+    // the same shape and the same (absent) effect rather than being
+    // invented here. See `PhysicsPreviewTool.h`.
+    std::unordered_map<Uuid, Vec2, UuidHash> physicsPreviewOverrides;
     void setBoneCreationPreview(std::optional<Vec2> start, std::optional<Vec2> end) {
         boneCreationPreviewStart = start;
         boneCreationPreviewEnd = end;

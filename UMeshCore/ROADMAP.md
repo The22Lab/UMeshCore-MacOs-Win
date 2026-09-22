@@ -1749,8 +1749,51 @@ Special-case validation needs, carried over into each phase's own tests:
    every caller that asked "what is selected" had to ask twice and decide
    which answer won -- differently each time.
 
-   Tested: `tests/ScenePlaybackTests.cpp` (18 tests). All 45 test binaries
-   pass.
+   Tested: `tests/ScenePlaybackTests.cpp` (18 tests).
+
+   `Editor/Tools/PhysicsPreviewTool.h/.cpp` ports
+   `Core/Tools/PhysicsPreviewTool.swift` (59 L) and registers it in
+   `ToolManager`, and the finding is worth more than the code.
+
+   **The pose override has no consumer, in Swift either, and the port's
+   earlier diagnosis of why was wrong.** `ToolManager.h` recorded this tool
+   as blocked until `EditorScene` owned a live `PhysicsConstraintSystem`,
+   on the grounds that the override had nothing to feed. The conclusion
+   was right and the reason was not: a live system would read
+   `baseWorldMatrices()` exactly as Swift's does and still never see an
+   override, because nothing in the Swift source reads
+   `physicsPreviewOverrides`. Verified by grep rather than by reading:
+   three mentions in the whole codebase -- the declaration and the two
+   `SceneManager` methods that write it. The Swift file's own header
+   asserts that `baseWorldMatrices()` reads them; it does not.
+
+   So the feature is unfinished upstream rather than missing in
+   translation, and what it actually needs is the absent READ -- a
+   decision about how a dragged bone enters the solver's rest pose --
+   which is a design question for whoever finishes it. It is ported as it
+   is, with the same shape and the same (absent) effect, documented at
+   length in the header. It IS registered, unlike `.Mesh`, because the
+   tool is live in the Swift app (the "y" key and the constraints menu
+   both select it), so a shell switching to that mode must find a tool
+   rather than nothing.
+
+   This is the opposite call from `ArcGeometryBuilder` in Phase 4, and for
+   a reason worth stating: that one had ZERO call sites and was not ported;
+   this one is reachable from two places in the UI. "Unfinished" and "dead"
+   look alike in a diff and are not the same, and grep tells them apart.
+
+   The hit-test is real geometry and is ported exactly, with rules that are
+   deliberately this tool's own and not `BoneTool`'s: both ENDS of every
+   bone are candidates, the segment between them is not hittable at all,
+   nearest end wins, and the radius is a flat 14 points that is NOT scaled
+   for touch (Swift's `let jointR: Float = 14` is a plain constant, not one
+   of the `#if os(iOS)` pairs `BoneTool` uses).
+
+   Tested: `tests/PhysicsPreviewToolTests.cpp` (11 tests), including one
+   that pins the documented dead end -- dragging a bone under an override
+   leaves every world matrix identical. If a consumer is ever added, that
+   is the test that should fail and send the reader to the header. All 46
+   test binaries pass.
 
    Tested: `tests/SceneCompositionTests.cpp` (23 tests) -- draw order and
    its tie-break, depth reordering nothing, front-to-back being exactly

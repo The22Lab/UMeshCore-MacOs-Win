@@ -47,7 +47,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-45 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+46 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -155,9 +155,16 @@ textura **cargada**, y no hay pipeline de decodificación de imágenes.
 
 **Pendiente, por otras razones:**
 
-- **`PhysicsPreviewTool`** (59 L) — mecánicamente trivial, pero su
-  override de pose no tiene consumidor: `EditorScene` no posee una
-  instancia viva de `PhysicsConstraintSystem`. Se desbloquea en Fase 5.
+- **`PhysicsPreviewTool`** (59 L) — **portado en Fase 5**, y el
+  diagnóstico que había aquí estaba equivocado a medias. Decía que estaba
+  bloqueado hasta que `EditorScene` tuviera un `PhysicsConstraintSystem`
+  vivo. No lo está: un sistema vivo leería `baseWorldMatrices()` igual que
+  el de Swift y **seguiría sin ver el override**, porque en Swift
+  *tampoco* lo lee nadie. Verificado por grep: `physicsPreviewOverrides`
+  tiene exactamente tres menciones — la declaración y los dos métodos que
+  la escriben. Es una feature sin terminar aguas arriba, no un hueco de
+  traducción, así que se porta con la misma forma y el mismo efecto
+  (ninguno), documentado en el header.
 - Los intercepts de IK-builder y Bind-Mode en `ToolManager` — ninguno de
   los dos subsistemas está modelado en `EditorScene`.
 - `solveRigPose` / `rigPose(atFrame:)` de `SceneAnimator` — Fase 5.
@@ -678,12 +685,27 @@ un frame es ambigua por un ulp cuando el reloj va por los miles de segundos
 double, idéntico en Swift, y **inofensivo justamente por la regla de
 arriba**: el error está acotado a una muestra y no se arrastra.
 
+**`Editor/Tools/PhysicsPreviewTool.h/.cpp`** ← `PhysicsPreviewTool.swift`
+(59 L), registrado ya en `ToolManager`. 11 tests.
+
+El hallazgo: **el override de pose no tiene consumidor, tampoco en Swift**
+(ver arriba). El tool sí está **vivo** —la tecla "y" y el menú de
+constraints lo seleccionan—, así que no es código muerto como
+`ArcGeometryBuilder`; es una feature a medio terminar, y se porta tal cual.
+Un test afirma exactamente eso: arrastrar un hueso no cambia una sola
+matriz de mundo. Si algún día se añade el lector, **ese** test es el que
+debe fallar.
+
+Su hit-test es geometría real y tiene reglas **propias**, distintas de las
+de `BoneTool`: candidatos son los **dos extremos** de cada hueso (el
+segmento entre ellos no es agarrable), gana el más cercano, y el radio es
+un 14 fijo que **no** se escala para táctil.
+
 ### Pendiente, en el orden que recomienda `HANDOFF.md`
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 1 | `PhysicsPreviewTool` | Fase 2, bloqueado | 59 | Solo necesita que `EditorScene` tenga una instancia viva de `PhysicsConstraintSystem`. |
-| 2 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
+| 1 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
 
 ---
 
