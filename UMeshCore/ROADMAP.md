@@ -598,10 +598,95 @@ Special-case validation needs, carried over into each phase's own tests:
    but-null / absent), wrong-type-access and malformed-input error paths.
    All 25 test binaries pass.
 
-   **Not yet started**: the ~35 `Saved*`-equivalent structs and the actual
-   `.umesh` project package encoder/decoder (manifest + `Assets/`
-   directory + SHA-256 dedup) built on top of this JSON module; the UMJSON
-   document builder built on top of it too.
+   **`Saved*` structs: started (the rig slice).** A dedicated research pass
+   (field-by-field, against the real Swift source, not assumed) inventoried
+   all 44 `Saved*`/`SavedProjectDocument` types across `ProjectPersistence.swift`
+   and `Data/Scene/ScenePersistence.swift`, confirmed exact fallback logic
+   for every custom `init(from:)`, and confirmed the top-level save/load/
+   apply entry points (`AppState.currentProjectDocument()` /
+   `ProjectPersistence.save/load` / `AppState.restore(document:)`, the last
+   of which mutates `SceneManager` in place via `restoreProject(...)` --
+   there is no "construct a fresh SceneManager" load path). Three buckets
+   emerged: (1) direct 1:1 with already-ported UMeshCore types (Bone,
+   Skeleton, SceneImage, Mesh, AnimationClip/Track/Keyframe, Skin,
+   AnimationEvent, and -- newly confirmed -- all four constraint types,
+   `IKConstraint`/`PathConstraint`/`TransformConstraint`/`PhysicsConstraint`,
+   whose C++ fields already match Swift's `Saved*Constraint` shapes
+   exactly); (2) plain-old-data Swift types with an obvious C++ shape but
+   no UMeshCore port yet (`TextureAsset`, `HierarchyItem`, `NamedAnimation`,
+   `CameraState`); (3) the entire Scene-compositing namespace
+   (`SceneComposition`/`SceneLayer`/`SceneCamera`/`SceneLight`/
+   `SceneAmbient`/`SceneMaterial`/`SceneFill`/`SceneViewCamera`), which has
+   no UMeshCore analog at all and is Phase 5 scope, same as
+   `writeScenesChunk` above.
+
+   `Serialization/SavedGeometry.h/.cpp` covers the shared primitives every
+   other `Saved*` type is built from: `Vec2`/`Vec3`/`Vec4` (`{x,y[,z[,w]]}`
+   objects), `Uuid` (a JSON string, Swift's own canonical `UUID` `Codable`
+   form), `Mat4` (a flat 16-element column-major array -- more compact than
+   Swift's 16-named-field `SavedMatrix4x4`, not attempting byte-parity, see
+   `Json.h`'s reasoning), and `scale2FromJson`, which alone preserves a
+   real Swift-specific read-side quirk: `SavedScale2`'s custom decoder
+   accepts either a bare number (old files' uniform-scale shorthand) or an
+   `{x,y}` object.
+
+   `Serialization/SavedSkeleton.h/.cpp` covers the rig slice this bucket-1
+   set supports today: `Bone` (with `SavedBone`'s exact base-pose fallback
+   -- `basePosition/baseRotation/baseScale/baseSkew` default to the local
+   pose when absent, matching old files that predate a separate rest pose)
+   and all four constraint types + `PhysicsSettings`, with their enum
+   fields (`PathSpacingMode`, `PathRotateMode`, `PhysicsType`) round-tripped
+   through string names matching Swift's actual `rawValue` spellings
+   (confirmed by reading the enum declarations directly, e.g.
+   `PathRotateMode.chainScale`, not guessed), each falling back to the same
+   default Swift's own `?? .default` does on an unrecognized/absent string.
+   `Skeleton` itself ties these together, with its four constraint arrays
+   treated as `?? []` on read (backward compatible with pre-constraint save
+   files) exactly like `SavedSkeleton`'s own optionals.
+
+   Deliberately deferred, documented rather than silently dropped (see
+   `SavedSkeleton.h`'s file header): a bone's `animationClip` field is not
+   yet written or read -- animation-clip JSON conversion (`SavedAnimationClip`/
+   `Track`/`Keyframe`/`KeyframeValue`, including the tagged-union value
+   shape with its own per-case Swift quirks: `.scale`'s scalar-or-vector2
+   fallback, `.attachment`'s 0-or-1-element array instead of an optional
+   UUID, `.event`'s three independently-optional inherit-default fields) is
+   its own increment, not yet built. Every bone restored through this file
+   alone gets a fresh empty `AnimationClip`, which is exactly Swift's own
+   fallback when the field is absent -- an animation-free round trip is
+   already correct today.
+
+   One more dangling-reference bug caught by the new tests, same class as
+   `BinaryExporter.cpp`'s `orderedBones()` bug from the previous increment:
+   `skeletonFromJson` originally chained `j.valueOr(key, fallback).asArray()`
+   directly into a range-for. `valueOr` returns a `JsonValue` by value, and
+   `.asArray()` returns a reference into that temporary's internals --
+   range-for's lifetime extension only applies to a reference bound
+   *directly* to the temporary, not to a reference obtained by calling a
+   member function on it, so the temporary was destroyed before the loop
+   body ran. Fixed the same way: bind each `valueOr(...)` result to a named
+   local first. Flagged in both files' comments now so the pattern is
+   recognizable next time.
+
+   Tested: `tests/SavedSkeletonTests.cpp` (10 tests) -- every primitive
+   round-trips, `SavedScale2`'s bare-number-or-object quirk on real parsed
+   JSON text, a full `Bone` round trip preserving base != local pose, a
+   hand-written old-file-shaped JSON blob confirming the base-pose fallback
+   really fires, all four constraint types + `PhysicsSettings`, an unknown
+   enum string falling back correctly, a full `Skeleton` round trip
+   including all four constraint arrays, and an old-shaped skeleton (no
+   constraint arrays at all) defaulting to empty. All 26 test binaries pass.
+
+   **Not yet started**: `SavedMesh`/`SceneImage`/`AnimationClip`/`Skin`/
+   `AnimationEvent`/`ConstraintSetupValues` JSON conversions (bucket 1's
+   remaining pieces); the bucket-2 types with no UMeshCore port yet
+   (`TextureAsset`, `HierarchyItem`, `NamedAnimation`, `CameraState`); the
+   actual `.umesh` project package encoder/decoder (manifest + `Assets/`
+   directory + SHA-256 dedup) tying it all together as
+   `SavedProjectDocument`; and the UMJSON document builder, which is a
+   fully separate model from `Saved*` (see the JSON-foundation entry
+   above) and needs its own pass once the rig/mesh/animation JSON pieces
+   above exist to draw from.
 4. **Shared render geometry layer** — platform-agnostic geometry building/
    batching/culling/projection/lighting math, exposed as POD vertex/uniform
    buffers consumed by thin Metal and DirectX 11/12 backends. Target the
