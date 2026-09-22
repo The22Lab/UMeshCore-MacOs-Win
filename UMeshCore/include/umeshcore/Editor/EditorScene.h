@@ -60,6 +60,12 @@ public:
     bool isPoseMode = false;
     int currentFrame = 0;
     float animationTime = 0.0f;
+    // Timeline playback range hints (`SceneManager.playbackStartFrame`/
+    // `playbackEndFrame`, `SceneManager.swift:276-277`). Real scene state,
+    // not UI-only -- used by the META chunk of the binary exporter (see
+    // Serialization/BinaryExporter.h) and, eventually, the timeline itself.
+    int playbackStartFrame = 0;
+    int playbackEndFrame = 0;
 
     // --- Selection state ---
     std::optional<Uuid> selectedImageID;

@@ -86,11 +86,28 @@ enum class ChunkID : std::uint32_t {
 // Per-chunk schema versions -- bump only the affected chunk on evolution.
 namespace ChunkVersion {
 inline constexpr std::uint16_t meta       = 1;
-inline constexpr std::uint16_t assets     = 1;
+// v2: the Swift writer's "asset not found" record (uuid + empty string +
+// zero vec2 + u32(0), then stop) is byte-ambiguous with a *found* asset in
+// reference mode (which also writes u32(0) before its reference string --
+// nothing distinguishes "no more fields" from "a string follows"). Since
+// the Swift app has no reader for this format to preserve compatibility
+// with (see the file header above), UMeshCore's writer/reader pair adds an
+// explicit `u8 found` flag immediately after the asset uuid instead of
+// replicating the ambiguity. See Serialization/BinaryExporter.h.
+inline constexpr std::uint16_t assets     = 2;
 inline constexpr std::uint16_t skeleton   = 1;
 inline constexpr std::uint16_t images     = 1;
 inline constexpr std::uint16_t meshes     = 1;
-inline constexpr std::uint16_t animations = 1;
+// v2: the Swift writer has a confirmed bug -- `writeKeyframe`'s
+// `.meshDeform` case is `break`, writing zero bytes (no discriminant, no
+// payload) where every other case writes at least a KeyframeValueCode
+// byte. Since nothing in the Swift app ever reads this format back (see
+// the file header above), there is no real byte-parity to preserve, and
+// replicating the bug here would mean UMeshCore's own from-scratch reader
+// permanently desyncs on its own writer's output. Fixed: `.meshDeform`
+// writes `KeyframeValueCode::MeshDeform` (already-reserved code 8) followed
+// by a length-prefixed Vec2 array, like every other keyframe value kind.
+inline constexpr std::uint16_t animations = 2;
 inline constexpr std::uint16_t scenes     = 1;
 } // namespace ChunkVersion
 

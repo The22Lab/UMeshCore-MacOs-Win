@@ -466,15 +466,83 @@ Special-case validation needs, carried over into each phase's own tests:
    composite primitive, chunk-framing size-patching, a full file-header
    round-trip, and the two error paths (bad magic, truncated read).
 
-   **Not yet started**: the chunk-level encoders (`BinaryExporter`'s
-   `writeMetaChunk`/`writeAssetsChunk`/`writeSkeletonChunk`/etc.) — these
-   take a `SceneManager`/`AssetManager` snapshot in the Swift source and
-   will need the same "inject what's needed" scoping pass `EditorScene` got
-   in Phase 2 before they can be written against this port's surface; the
-   native `.umesh` *project* package (`Data/ProjectPersistence.swift`,
-   1,905 lines, ~35 `Saved*` structs — distinct from this binary export
-   format, see file header note below); and UMJSON interchange
-   (`Export/JSON/*.swift`, ~1,450 lines combined).
+   **Chunk-level encoders: done for 6 of 7 chunks.** `Serialization/
+   BinaryExporter.h/.cpp` ports `Export/BinaryExporter.swift`'s
+   `writeMetaChunk`/`writeAssetsChunk`/`writeSkeletonChunk`/
+   `writeImagesChunk`/`writeMeshesChunk`/`writeAnimationsChunk` 1:1,
+   field-by-field, verified against 3 parallel research passes (chunk byte
+   layout, C++ surface cross-reference, asset/scene-camera blocker check)
+   before writing code, the same "inject what's needed" scoping `EditorScene`
+   used in Phase 2 rather than porting `SceneManager`/`AssetManager`
+   themselves. `writeScenesChunk` (the 7th chunk) is deliberately NOT
+   ported: it serializes `scene.sceneCompositions`
+   (`SceneComposition`/`SceneLayer`/`SceneCamera`/`SceneLight`/
+   `SceneAmbient`/`SceneFill`, all in `Data/Scene/`), none of which are
+   ported and which ROADMAP already scopes to Phase 5. This is a safe,
+   self-describing omission, not a silent gap: the Swift source itself only
+   writes SCENES `if !scene.sceneCompositions.isEmpty`, so a project that
+   never used Scene mode already produces an identical file whether or not
+   that chunk exists, and `EditorScene` has no `sceneCompositions` field at
+   all, so this port's equivalent of that condition is unconditionally
+   false today.
+
+   Two new small types support this: `Serialization/AssetRecord.h` (a
+   minimal `{id, name, filePath, size}` stand-in for Swift's `AssetManager`/
+   `TextureAsset` -- confirmed by research that the ASSETS chunk only ever
+   needs those four fields, never the GPU texture handle or atlas state
+   those Swift types also carry, so this is NOT blocked on an image-decode
+   pipeline the way `CanvasPicking.imageHit` was in Phase 2) and
+   `Serialization/BinaryExportOptions.h` (port of `BinaryExportOptions`,
+   omitting Swift's `includeBaseAnimations` field since grepping the whole
+   of `BinaryExporter.swift` shows it's never read there). `EditorScene`
+   gained `playbackStartFrame`/`playbackEndFrame` (real scene state the
+   META chunk needs, mirroring `SceneManager.swift:276-277`).
+
+   Two documented, deliberate divergences from the Swift writer, both
+   version-bumped in `UMeshBinaryFormat.h`'s `ChunkVersion`:
+   - **ASSETS (v2)**: Swift's "asset not found" record and a *found* asset's
+     reference-mode record are byte-ambiguous (both end in the same
+     `u32(0)` with nothing telling a reader whether a string follows).
+     Added an explicit `u8 found` flag instead of replicating the ambiguity
+     -- there is no real Swift reader to preserve byte-parity with (see the
+     `BinaryReader.h` note above).
+   - **ANIMATIONS (v2), the Risk #4 decision**: confirmed the Swift bug in
+     full -- `writeKeyframe`'s `.meshDeform` case is exactly `case
+     .meshDeform: break`, writing zero bytes (no discriminant, no payload)
+     while every other case writes at least a `KeyframeValueCode` byte,
+     silently desyncing the rest of the stream for any file with a
+     meshDeform keyframe. Put to the user explicitly (Risk #4 calls for
+     this): fix it in the C++ writer, since nothing in the Swift app has
+     ever read this format back, so there is no real interop to break.
+     `.meshDeform` now writes `KeyframeValueCode::MeshDeform` (code 8,
+     already reserved) followed by a length-prefixed `Vec2` array like
+     every other value kind.
+
+   One implementation bug caught by the new tests before commit: the first
+   version of `writeAnimationsChunk` iterated `scene.skeleton.orderedBones()`
+   (which returns `std::vector<Bone>` by value) directly in a range-for and
+   stored `const AnimationClip*` pointers into its elements for use *after*
+   the loop -- the temporary vector is destroyed at the end of its own
+   range-for, so those pointers dangled, corrupting the keyframe `value`
+   variant and crashing with `std::bad_variant_access` on the very first
+   test run. Fixed by binding `orderedBones()`'s result to a named local
+   that outlives the whole function.
+
+   Tested: `tests/BinaryExporterTests.cpp` (8 tests) — builds a non-trivial
+   scene (2 bones with parent/child hierarchy, 2 sprites one bound to a
+   bone with a full animation clip, tracks covering every `KeyframeValue`
+   case including `.meshDeform` and `.event`, one asset present + one
+   missing) and round-trips it through `BinaryExporter` -> `BinaryReader`,
+   asserting exact field values chunk by chunk, plus dedicated coverage for
+   the found/missing-asset flag, embed-mode byte inlining, and the
+   meshDeform fix specifically. All 24 test binaries pass.
+
+   **Not yet started**: the native `.umesh` *project* package
+   (`Data/ProjectPersistence.swift`, 1,905 lines, ~35 `Saved*` structs --
+   distinct from this binary export format, see file header note below);
+   UMJSON interchange (`Export/JSON/*.swift`, ~1,450 lines combined); and
+   `writeScenesChunk`, deferred to Phase 5 alongside `SceneComposition` (see
+   above).
 4. **Shared render geometry layer** — platform-agnostic geometry building/
    batching/culling/projection/lighting math, exposed as POD vertex/uniform
    buffers consumed by thin Metal and DirectX 11/12 backends. Target the

@@ -28,6 +28,7 @@ add_library(umeshcore STATIC
     Editor/Tools/RotateTool.cpp
     Editor/Tools/BoneTool.cpp
     Editor/ToolManager.cpp
+    Serialization/BinaryExporter.cpp
 )
 
 target_include_directories(umeshcore
