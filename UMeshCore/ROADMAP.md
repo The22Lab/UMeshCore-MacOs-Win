@@ -407,6 +407,74 @@ Special-case validation needs, carried over into each phase's own tests:
    see Risks), the native `.umesh` project package (JSON + SHA-256-deduped
    PNG assets, ~35 `Saved*` structs with documented optional/fallback
    semantics preserved field-by-field), UMJSON engine-agnostic interchange.
+   *Status: started.* `Serialization/UMeshBinaryFormat.h` ports
+   `Export/UMeshBinaryFormat.swift` in full: the file header layout
+   constants (`magic`/`version`/`HeaderFlag`), `ChunkID` (FourCC values
+   verified against the Swift source's literal hex), per-chunk
+   `ChunkVersion`, and every compact wire-code enum (`InterpCode`,
+   `TrackPropertyCode`, `KeyframeValueCode`, `AnimationSpaceCode`) plus the
+   `KeyframeFlags`/`ImageFlags` bitmasks (Swift `OptionSet` -> a small
+   `rawValue` struct with `contains`/`insert`, this port's existing pattern
+   for bitmask types). One finding worth flagging for future chunk-encoder
+   work: `TrackPropertyCode`'s numeric values are a separate, frozen,
+   append-only numbering (assigned in shipping order) and do NOT match
+   `AnimationTrackProperty`'s C++ enum declaration order (which mirrors
+   `Data/Keyframe.swift`'s declaration order instead) — documented at length
+   in the header so nobody ever `static_cast`s the enum directly into the
+   wire format; conversion always goes through `toWireCode`/`fromWireCode`,
+   mirroring the Swift source's own `init(_:)`/`.trackProperty` indirection
+   rather than `.rawValue`.
+
+   `Serialization/BinaryWriter.h` ports `Export/BinaryWriter.swift`'s
+   append-only little-endian primitive writer 1:1 (fixed-width ints/float/
+   bool, length-prefixed string, Vec2/Vec3/Vec4/Mat4, length-prefixed
+   arrays, chunk framing via `openChunk`/`closeChunk`, header patching via
+   `patchU32`), with two documented, deliberate divergences: (1) array
+   writes go through the same scalar primitives element-by-element instead
+   of Swift's `withUnsafeBufferPointer` bulk memory copy — a pure
+   performance optimization in the Swift source with no behavioral
+   difference on any little-endian target this port runs on, avoided here
+   to not depend on pointer-reinterpretation UB; (2) `writeUuid` writes this
+   port's `Uuid` as `hi` then `lo` (two little-endian `UInt64` words)
+   instead of copying Swift `UUID.uuid`'s raw 16-byte RFC-4122 tuple —
+   `Uuid`'s own header already establishes that it needn't bit-match
+   Swift's UUID generator, and since the Swift app's binary exporter has no
+   reader to interoperate with (see below), there is no cross-language byte
+   layout to preserve here, only round-trip self-consistency.
+
+   **Newly identified**, confirmed by grepping the whole Swift source tree:
+   `.umesh`'s binary format is *export-only* in the Swift app today — there
+   is no `BinaryReader.swift`/decoder anywhere, only `BinaryExporter.swift`
+   writing one-way. This sharpens Risk #4's framing: the reader isn't a
+   port with a Swift reference to diff against, it's new code from the
+   start. `Serialization/BinaryReader.h` is added on that basis: the exact
+   byte-level inverse of `BinaryWriter` (same primitive set, plus
+   `readFileHeader`/`readChunkHeader` for framing, bounds-checked
+   throughout since file input is untrusted — throws `std::out_of_range` on
+   truncation, `std::runtime_error` on a bad magic). It only covers the
+   primitive layer for now; the `.meshDeform`-empty-payload decision Risk #4
+   calls for is deferred to when the ANIM chunk's actual encoder/decoder are
+   written (the chunk-level `BinaryExporter`/scene-shaped work below), since
+   that's the first point a real choice (replicate vs. fix-with-version-bump)
+   has anything to act on.
+
+   Tested: `tests/BinarySerializationTests.cpp` (12 tests) — FourCC/magic,
+   every `ChunkID` value against the Swift source's literal hex, spot
+   checks plus a full round-trip of every `AnimationTrackProperty` through
+   `toWireCode`/`fromWireCode`, `InterpCode` round-trips, both bitmask
+   types, `BinaryWriter`/`BinaryReader` round-trips for every scalar and
+   composite primitive, chunk-framing size-patching, a full file-header
+   round-trip, and the two error paths (bad magic, truncated read).
+
+   **Not yet started**: the chunk-level encoders (`BinaryExporter`'s
+   `writeMetaChunk`/`writeAssetsChunk`/`writeSkeletonChunk`/etc.) — these
+   take a `SceneManager`/`AssetManager` snapshot in the Swift source and
+   will need the same "inject what's needed" scoping pass `EditorScene` got
+   in Phase 2 before they can be written against this port's surface; the
+   native `.umesh` *project* package (`Data/ProjectPersistence.swift`,
+   1,905 lines, ~35 `Saved*` structs — distinct from this binary export
+   format, see file header note below); and UMJSON interchange
+   (`Export/JSON/*.swift`, ~1,450 lines combined).
 4. **Shared render geometry layer** — platform-agnostic geometry building/
    batching/culling/projection/lighting math, exposed as POD vertex/uniform
    buffers consumed by thin Metal and DirectX 11/12 backends. Target the
