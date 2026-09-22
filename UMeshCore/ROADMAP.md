@@ -325,12 +325,32 @@ Special-case validation needs, carried over into each phase's own tests:
    since the two copies were byte-identical logic, not two different rules
    that happen to look alike.
 
-   `ToolManager` + the other 6 tools are next, with a proven pattern to
-   follow: each tool's manipulation math (drag deltas, snap, axis
-   constraint) is independent of the picking gap, and every tool's
-   `onMouseDown`/`onMouseUp` writes through `commitKeyframe`, `moveBoneRoot`/
-   `setImagePosition`, or the selection methods above, all of which
-   `EditorScene` already supports end to end.
+   `Editor/Tools/ScaleTool.h/.cpp` is the third concrete tool, ported and
+   tested (7 tests: no-op without a scale-corner handle active, a uniform
+   corner scaling both axes by the drag-distance ratio, a single-axis
+   corner (index 0/1) scaling only x or y, Shift-snap during a drag,
+   single-bone scale with keyframe commit in Animate mode, bone length
+   change in Setup mode, and the post-release "settle" easing converging
+   to its snapped target over repeated `update()` calls). Needed one new
+   `EditorScene` mutator, `setBoneScale` — a straight 1:1 port of
+   `SceneManager.setBoneScale`, following the exact same
+   Setup-writes-base/Animate-commits-keyframe shape as `moveBoneRoot` and
+   friends. `ScaleTool.onMouseDown`'s image-vs-hit-test precedence is the
+   mirror image of `MoveTool`'s: `scene.selectedImageID` is tried FIRST,
+   falling back to the injected hit-test only if nothing is selected
+   (`MoveTool` tries the hit-test first) — a genuine difference between the
+   two tools in the Swift source, preserved exactly rather than
+   "harmonized." `update()` (the settle-toward-target easing after a
+   Shift-snapped release) is this port's first real use of `Tool::update`,
+   confirming that hook's shape works as designed.
+
+   `ToolManager` + the other 5 tools (Rotate/Skew/Bone/Mesh/PhysicsPreview)
+   are next, with a proven pattern to follow: each tool's manipulation math
+   (drag deltas, snap, axis constraint) is independent of the picking gap,
+   and every tool's `onMouseDown`/`onMouseUp` writes through
+   `commitKeyframe`, `moveBoneRoot`/`setImagePosition`/`setBoneScale`, or
+   the selection methods above, all of which `EditorScene` already supports
+   end to end.
 3. **Serialization** — binary UMSH chunked format (byte-exact; the
    `.meshDeform` empty-payload gap in the current Swift writer needs an
    explicit decision before the reader is written, not a silent port-as-is —

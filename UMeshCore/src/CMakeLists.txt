@@ -23,6 +23,7 @@ add_library(umeshcore STATIC
     Editor/CanvasPicking.cpp
     Editor/Tools/SelectTool.cpp
     Editor/Tools/MoveTool.cpp
+    Editor/Tools/ScaleTool.cpp
 )
 
 target_include_directories(umeshcore

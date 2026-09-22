@@ -320,6 +320,26 @@ public:
         applyAnimationsNow();
     }
 
+    void setBoneScale(Uuid id, Vec2 scale) {
+        const Bone* existing = skeleton.bone(id);
+        if (existing == nullptr) return;
+        Bone bone = *existing;
+        bone.localTransform.scale.x = std::max(scale.x, 0.001f);
+        bone.localTransform.scale.y = std::max(scale.y, 0.001f);
+        if (!isAnimationEditingEnabled && !isPoseMode) {
+            bone.baseTransform.scale.x = bone.localTransform.scale.x;
+            bone.baseTransform.scale.y = bone.localTransform.scale.y;
+        }
+        skeleton.setBone(bone);
+        if (isAnimationEditingEnabled && !isPoseMode) {
+            commitKeyframe(
+                id, AnimationTrackProperty::Scale,
+                ScaleValue{Vec2(bone.localTransform.scale.x, bone.localTransform.scale.y)});
+        } else {
+            applyAnimationsNow();
+        }
+    }
+
     // --- Undo/redo ---
 
     void pushUndoState() { undoRedo.push(currentSnapshot()); }
