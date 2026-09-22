@@ -34,7 +34,8 @@ float wrapToPi(float angle) {
 
 // ---- The projected shape ------------------------------------------------
 
-std::optional<SceneGizmoShape> buildGizmoShape(const SceneGizmoState& state) {
+std::optional<SceneGizmoShape> buildGizmoShape(
+    const SceneGizmoState& state, const LightWorldGeometry* lightGeometry) {
     const std::optional<Vec2> originPx = state.map(state.basis.origin);
     if (!originPx.has_value()) return std::nullopt;
 
@@ -57,13 +58,38 @@ std::optional<SceneGizmoShape> buildGizmoShape(const SceneGizmoState& state) {
         const std::optional<std::vector<Vec2>> quad = planeQuad(state, id);
         if (quad.has_value()) shape.planes.emplace_back(id, *quad);
     }
+
+    // A light's dots go through the REAL projection: its diagram is not
+    // part of this pass's stabilisation, only the shared manipulator is.
+    if (lightGeometry != nullptr) {
+        for (const auto& entry : lightGeometry->handlePositions) {
+            const std::optional<Vec2> px = state.realProjection.project(entry.second);
+            if (px.has_value()) shape.lightHandles.emplace_back(entry.first, *px);
+        }
+    }
     return shape;
 }
 
 // ---- The hit test -------------------------------------------------------
 
 std::optional<SceneGizmoHit> hitTestGizmo(
-    const SceneGizmoShape& shape, const Vec2& pointPx, SceneGizmoTool tool) {
+    const SceneGizmoShape& shape, const Vec2& pointPx, SceneGizmoTool tool, float lightGrabPx) {
+    // A LIGHT'S OWN HANDLES FIRST, and by NEAREST rather than by first
+    // match -- see the header.
+    {
+        std::optional<std::pair<SceneLightHandle, float>> nearestLight;
+        for (const auto& entry : shape.lightHandles) {
+            const float d = length(pointPx - entry.second);
+            if (!(d <= lightGrabPx)) continue;
+            if (!nearestLight.has_value() || d < nearestLight->second) {
+                nearestLight = std::make_pair(entry.first, d);
+            }
+        }
+        if (nearestLight.has_value()) {
+            return SceneGizmoHit{SceneGizmoHandleId::kLight, std::nullopt, nearestLight->first};
+        }
+    }
+
     struct Best {
         SceneGizmoHandleId id;
         std::optional<SceneGizmoScreenAxis> axis;
@@ -127,7 +153,7 @@ std::optional<SceneGizmoHit> hitTestGizmo(
     }
 
     if (!best.has_value()) return std::nullopt;
-    return SceneGizmoHit{best->id, best->axis};
+    return SceneGizmoHit{best->id, best->axis, std::nullopt};
 }
 
 // ---- The measurements ---------------------------------------------------
@@ -358,6 +384,199 @@ void applyLayerDrag(
             applyRotate(
                 layer, start, drag, nowPx, projection,
                 originPx.has_value() ? *originPx : Vec2::zero());
+            return;
+    }
+}
+
+// ---- Dragging a light ---------------------------------------------------
+
+void applyLightDrag(
+    SceneLight& light, const SceneLight& start, SceneGizmoTool tool, const SceneGizmoDrag& drag,
+    const Vec2& nowPx, const SceneProjection& projection, const Vec2& originPx) {
+    const Vec3 centre = start.world();
+
+    // Where the pointer is, on the world plane through the light that
+    // faces the camera. Every one of a light's own handles is answered
+    // here, which is what keeps the grabbed point under the pointer at any
+    // camera angle.
+    const auto facingHit = [&]() {
+        return projection.hitPlane(nowPx, centre, lightViewAxis(projection));
+    };
+
+    if (drag.handle == SceneGizmoHandleId::kLight) {
+        if (!drag.lightHandle.has_value()) return;
+        switch (*drag.lightHandle) {
+            case SceneLightHandle::kRadius: {
+                const std::optional<Vec3> hit = facingHit();
+                if (!hit.has_value()) return;
+                const float radius = lightRadiusForHit(*hit, centre);
+                light.radius = radius;
+                // THE BAND is what the artist was looking at, so it is
+                // what is preserved. Softness is a fraction of the radius,
+                // so leaving it alone would make the fade grow with the
+                // radius and the light would change shape while being
+                // resized.
+                if (start.radius > 1e-5f && radius > 1e-5f) {
+                    const float band = start.radius * start.softness;
+                    light.softness = std::min(std::max(band / radius, 0.0f), 1.0f);
+                }
+                return;
+            }
+            case SceneLightHandle::kSoftness: {
+                const std::optional<Vec3> hit = facingHit();
+                if (!hit.has_value()) return;
+                light.softness = lightSoftnessForHit(*hit, centre, start.radius);
+                return;
+            }
+            case SceneLightHandle::kDirection: {
+                const std::optional<Vec3> hit = facingHit();
+                if (!hit.has_value()) return;
+                const Vec3 aim = *hit - centre;
+                if (!(length(aim) > 1e-5f)) return;
+                aimLight(light, aim);
+                return;
+            }
+            case SceneLightHandle::kInnerAngle:
+            case SceneLightHandle::kOuterAngle: {
+                // In the CONE'S OWN PLANE, not the facing one.
+                const Vec3 across = lightConePlane(start.direction(), projection);
+                const Vec3 normal = cross(start.direction(), across);
+                const std::optional<Vec3> hit = projection.hitPlane(nowPx, centre, normal);
+                if (!hit.has_value()) return;
+                const std::optional<float> angle =
+                    lightHalfAngleForHit(*hit, centre, start.direction());
+                if (!angle.has_value()) return;
+                if (*drag.lightHandle == SceneLightHandle::kOuterAngle) {
+                    light.outerAngle = std::min(std::max(*angle, 0.0f), kPi);
+                    // The inner cone cannot outgrow the outer one, or the
+                    // smoothstep between them would run backwards.
+                    light.innerAngle = std::min(start.innerAngle, light.outerAngle);
+                } else {
+                    light.innerAngle = std::min(std::max(*angle, 0.0f), start.outerAngle);
+                }
+                return;
+            }
+        }
+        return;
+    }
+
+    const SceneGizmoBasis basis = lightBasis(start);
+    const auto place = [&](const Vec3& moved) {
+        light.position = Vec2(moved.x, moved.y);
+        light.positionZ = moved.z;
+    };
+
+    switch (tool) {
+        case SceneGizmoTool::kTranslate:
+            switch (drag.handle) {
+                case SceneGizmoHandleId::kAxisX:
+                case SceneGizmoHandleId::kAxisY:
+                case SceneGizmoHandleId::kAxisZ: {
+                    const std::optional<Vec3> direction = basis.direction(drag.handle);
+                    if (!direction.has_value()) return;
+                    const std::optional<float> amount =
+                        axisDragUnits(projection, drag.startPx, nowPx, basis.origin, *direction);
+                    if (!amount.has_value()) return;
+                    place(centre + *direction * *amount);
+                    return;
+                }
+                case SceneGizmoHandleId::kPlaneXY:
+                case SceneGizmoHandleId::kPlaneXZ:
+                case SceneGizmoHandleId::kPlaneYZ: {
+                    const std::optional<Vec3> normal = planeNormal(drag.handle, basis);
+                    if (!normal.has_value()) return;
+                    const std::optional<Vec3> delta =
+                        planeDragDelta(projection, drag.startPx, nowPx, basis.origin, *normal);
+                    if (!delta.has_value()) return;
+                    place(centre + *delta);
+                    return;
+                }
+                case SceneGizmoHandleId::kFree: {
+                    // Across the plane the artist is looking at, which is
+                    // the one plane a pointer can specify a point in
+                    // without a third number.
+                    const std::optional<Vec3> delta = planeDragDelta(
+                        projection, drag.startPx, nowPx, basis.origin, lightViewAxis(projection));
+                    if (!delta.has_value()) return;
+                    place(centre + *delta);
+                    return;
+                }
+                default: return;
+            }
+        case SceneGizmoTool::kRotate: {
+            // AIMING, not orienting. A light stores where it points, so a
+            // turn is applied to its direction and re-expressed. A turn
+            // about the beam itself comes back as no change, which is
+            // correct: a cone has nothing to roll.
+            if (start.kind == SceneLightKind::kPoint) return;
+            if (drag.handle == SceneGizmoHandleId::kViewRing) {
+                const float turn = screenAngleDelta(originPx, drag.startPx, nowPx);
+                aimLight(
+                    light, rotatedAbout(start.direction(), lightViewAxis(projection), turn));
+                return;
+            }
+            const std::optional<Vec3> axis = basis.direction(drag.handle);
+            if (!axis.has_value()) return;
+            const std::optional<float> turn =
+                ringDragAngle(projection, drag.startPx, nowPx, basis.origin, *axis);
+            if (!turn.has_value()) return;
+            aimLight(light, rotatedAbout(start.direction(), *axis, *turn));
+            return;
+        }
+        case SceneGizmoTool::kScale:
+        case SceneGizmoTool::kShear:
+            // A light has no size to scale and no plane to slant.
+            return;
+    }
+}
+
+void applyCameraDrag(
+    SceneCamera& camera, const SceneCamera& start, SceneGizmoTool tool,
+    const SceneGizmoDrag& drag, const Vec2& nowPx, const SceneProjection& projection,
+    const Vec2& originPx) {
+    const SceneGizmoBasis basis = cameraBasis(start);
+    switch (tool) {
+        case SceneGizmoTool::kTranslate: {
+            // The camera's handles are the WORLD's axes, and they go
+            // through the same world-space measurement every other handle
+            // does.
+            const std::optional<Vec3> direction = basis.direction(drag.handle);
+            if (!direction.has_value()) return;
+            const std::optional<float> amount =
+                axisDragUnits(projection, drag.startPx, nowPx, basis.origin, *direction);
+            if (!amount.has_value()) return;
+            if (drag.handle == SceneGizmoHandleId::kAxisX) {
+                camera.position.x = start.position.x + *amount;
+            } else if (drag.handle == SceneGizmoHandleId::kAxisY) {
+                camera.position.y = start.position.y + *amount;
+            } else {
+                camera.positionZ = start.positionZ + *amount;
+            }
+            return;
+        }
+        case SceneGizmoTool::kRotate: {
+            if (drag.handle == SceneGizmoHandleId::kViewRing) {
+                camera.rotation3D.z =
+                    start.rotation3D.z + screenAngleDelta(originPx, drag.startPx, nowPx);
+                return;
+            }
+            const std::optional<Vec3> normal = basis.direction(drag.handle);
+            if (!normal.has_value()) return;
+            const std::optional<float> turn =
+                ringDragAngle(projection, drag.startPx, nowPx, basis.origin, *normal);
+            if (!turn.has_value()) return;
+            if (drag.handle == SceneGizmoHandleId::kAxisZ) {
+                camera.rotation3D.z = start.rotation3D.z + *turn;
+            } else if (drag.handle == SceneGizmoHandleId::kAxisX) {
+                camera.rotation3D.x = start.rotation3D.x + *turn;
+            } else {
+                camera.rotation3D.y = start.rotation3D.y + *turn;
+            }
+            return;
+        }
+        case SceneGizmoTool::kScale:
+        case SceneGizmoTool::kShear:
+            // A camera has neither.
             return;
     }
 }

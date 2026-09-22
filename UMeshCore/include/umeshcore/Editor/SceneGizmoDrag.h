@@ -42,6 +42,8 @@
 #include <vector>
 
 #include "umeshcore/Editor/SceneGizmoState.h"
+#include "umeshcore/Editor/SceneLightGizmo.h"
+#include "umeshcore/Scene/SceneCamera.h"
 #include "umeshcore/Scene/SceneLayer.h"
 
 namespace umeshcore {
@@ -65,9 +67,20 @@ struct SceneGizmoShape {
     std::vector<std::pair<SceneGizmoHandleId, std::vector<Vec2>>> planes;
     // The view ring's radius in pixels, which is what a radial test needs.
     float ringRadiusPx = kSceneGizmoHandlePixels;
+    // A light's own dots, in `lightHandlesFor`'s fixed order. Empty for
+    // anything that is not a light, so every other caller is untouched.
+    //
+    // Projected through the REAL camera, not the stabilised one: a light's
+    // diagram is not part of the manipulator's stabilisation pass, and the
+    // dots have to sit on the rings and arcs the GPU draws from the same
+    // world geometry.
+    std::vector<std::pair<SceneLightHandle, Vec2>> lightHandles;
 };
 
-std::optional<SceneGizmoShape> buildGizmoShape(const SceneGizmoState& state);
+// `lightGeometry` is optional: pass it when the gizmo's target is a light,
+// and its handle positions are projected and added to the shape.
+std::optional<SceneGizmoShape> buildGizmoShape(
+    const SceneGizmoState& state, const LightWorldGeometry* lightGeometry = nullptr);
 
 // ---- The hit test -------------------------------------------------------
 
@@ -77,6 +90,10 @@ struct SceneGizmoHit {
     // dragging: the shear tool's Z, whose along/across split is measured
     // in pixels.
     std::optional<SceneGizmoScreenAxis> axis;
+    // Set when `id` is `kLight`: which of the light's own handles it is.
+    // `kLight` is one flat case precisely so this can carry the payload
+    // without the buffer-ordering enum growing five more members.
+    std::optional<SceneLightHandle> lightHandle;
 };
 
 // Which handle a point grabs. NO SIDE EFFECTS: a shell asks this to decide
@@ -106,8 +123,17 @@ struct SceneGizmoHit {
 // cannot be told apart from a transcription bug. The test pins it, so
 // whoever decides to change it (test the centre first, or start the axes
 // a few pixels out from the origin) will be told exactly what they moved.
+// A LIGHT'S OWN HANDLES ARE TESTED FIRST, and by NEAREST rather than by
+// first match. They are dots, they sit close together -- at a narrow cone
+// the two arc handles meet the rim within a few pixels of each other --
+// and taking the first one in range would let the list's order decide
+// which of two adjacent handles you got. They come before the axes because
+// a dot sitting on top of an arrow is the thing you are reaching for: the
+// arrow is long and easy to find elsewhere, while the dot is the only
+// place that value can be changed at all.
 std::optional<SceneGizmoHit> hitTestGizmo(
-    const SceneGizmoShape& shape, const Vec2& pointPx, SceneGizmoTool tool);
+    const SceneGizmoShape& shape, const Vec2& pointPx, SceneGizmoTool tool,
+    float lightGrabPx = kSceneLightGrabPixels);
 
 // ---- The measurements ---------------------------------------------------
 
@@ -144,6 +170,8 @@ struct SceneGizmoDrag {
     Vec2 startPx;
     // The grabbed axis's screen direction, for the shear tool's Z handle.
     std::optional<SceneGizmoScreenAxis> axis;
+    // Which of a light's own handles, when `handle` is `kLight`.
+    std::optional<SceneLightHandle> lightHandle;
 };
 
 // Move the layer to where this drag now points.
@@ -165,6 +193,37 @@ struct SceneGizmoDrag {
 void applyLayerDrag(
     SceneLayer& layer, const SceneLayer& start, SceneGizmoTool tool, const SceneGizmoDrag& drag,
     const Vec2& nowPx, const SceneProjection& projection, const Vec2& cardHalfExtent);
+
+// What a drag does to a LIGHT.
+//
+// ALWAYS FROM `start`, and here the reason is sharper than for a card: the
+// handles that end in a clamp -- a radius at zero, a cone at half a turn
+// -- would otherwise RATCHET. Push a value past its limit and the delta
+// that would bring it back was already swallowed by the clamp, so the
+// light never comes home.
+//
+// Every one of a light's own handles is answered on the world plane
+// through the light that FACES THE CAMERA, which is what keeps the grabbed
+// point under the pointer at any camera angle. The one exception is the
+// cone's two angle handles, read in the CONE'S OWN plane: the angle being
+// read is the angle the arc was drawn at, and reading it anywhere else
+// would answer a different question.
+//
+// The shared handles -- the arrows and the rings -- mean for a light what
+// they mean for a card, so they go through the same measurements. Scale
+// and shear do nothing at all: a light has no size to scale and no plane
+// to slant. Its size IS its radius and its cone, and those have handles of
+// their own that say what they change.
+void applyLightDrag(
+    SceneLight& light, const SceneLight& start, SceneGizmoTool tool, const SceneGizmoDrag& drag,
+    const Vec2& nowPx, const SceneProjection& projection, const Vec2& originPx);
+
+// What a drag does to the SHOT CAMERA. Translate and rotate only -- a
+// camera has neither a size nor a slant.
+void applyCameraDrag(
+    SceneCamera& camera, const SceneCamera& start, SceneGizmoTool tool,
+    const SceneGizmoDrag& drag, const Vec2& nowPx, const SceneProjection& projection,
+    const Vec2& originPx);
 
 // ---- The two screen predicates the hit test is built on -----------------
 

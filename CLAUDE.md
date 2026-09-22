@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-50 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+51 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -188,8 +188,30 @@ un eje dibujado — los ejes empiezan *en* el origen, así que su distancia
 nunca es mayor, y el empate lo gana el eje. Medido: 2618 agarres alrededor
 del origen, **cero** al centro.
 
-Falta: el arrastre de **luces** y de **cámara** (`mutateLight`,
-`mutateCamera`), y `TimelineView.swift` entero (4326 L).
+**`Editor/SceneLightGizmo.h/.cpp`** ← `Render/SceneLightGizmo.swift`
+(253 L) + `lightWorldGeometry` sacado del overlay, más el arrastre de
+**luces** y de **cámara** en `SceneGizmoDrag`. 12 tests.
+
+Los handles de una luz se responden en el plano de mundo que **mira a la
+cámara**, y el header Swift lo justifica contando grados de libertad: un
+puntero da dos números, un radio quiere uno y una dirección dos, así que el
+mapa puntero→valor solo es biyectivo cuando se fija el grado que falta — y
+fijarlo al plano que el artista está mirando es lo que mantiene el punto
+agarrado bajo el puntero.
+
+Detalles que el port conserva y testea: al estirar el radio se preserva la
+**banda** en unidades de mundo (no la fracción, o la luz cambiaría de forma
+al redimensionarla); los ángulos del cono se leen en el **plano del propio
+cono**, no en el que mira a la cámara; y `aimLight` deja el azimut **quieto**
+en el polo, porque `atan2(0,0)` lo aplastaría a cero y sacar la luz del polo
+la lanzaría a donde nunca apuntó.
+
+`lightWorldGeometry` es **una sola geometría con dos consumidores**: los
+puntos que agarra el artista y los anillos/arcos que dibuja la GPU
+(rellena el `SceneGizmoLayout::LightDiagram` que la Fase 4 dejó definido y
+sin llenar).
+
+Falta de la deuda SwiftUI: `TimelineView.swift` entero (4326 L).
 `ringFrame` y las constantes de geometría que el mesh builder del gizmo
 necesita ya están extraídas a `Render/SceneGizmoLayout.h` (Fase 4, pieza
 5). Lo demás sigue dentro de las vistas:
