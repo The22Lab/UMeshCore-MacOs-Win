@@ -60,7 +60,14 @@ explicitly in `ROADMAP.md` §2 as follow-up work for whoever has Xcode access.
 
 ## Status
 
-See task list / `ROADMAP.md`. As of this writing: Phase 0 (scaffolding) and
-the pure-evaluation half of the Animation module (AnimationCurve, Keyframe,
-AnimationClip) are implemented and tested. Model (Bone/Skeleton/Mesh) and
-Constraints (IK/Path/Transform/Physics) are next.
+**See `STATUS.md`** — the scannable summary of where each phase stands,
+what is still pending and why, and where to find the Swift reference for
+each remaining piece.
+
+`ROADMAP.md` is the detailed running record: it grows with every increment
+and explains each decision and divergence at length. `STATUS.md` is the
+map; `ROADMAP.md` is the territory.
+
+In short, at the time of writing: Phases 0-3 are complete except for work
+that a later phase unblocks, Phase 4 (shared render geometry) is in
+progress, and Phases 5-6 have not started.
