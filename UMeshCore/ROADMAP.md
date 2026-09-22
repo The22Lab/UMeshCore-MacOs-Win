@@ -308,7 +308,24 @@ Special-case validation needs, carried over into each phase's own tests:
    multi-select, click-to-clear, shift-click-preserves-on-empty-canvas)
    against this design.
 
-   `ToolManager` + the other 7 tools are next, now with a proven pattern to
+   `Editor/Tools/MoveTool.h/.cpp` is the second concrete tool, ported and
+   tested (5 tests: sprite drag with preview-then-commit, a plain click
+   that must NOT move anything, single-bone drag with keyframe commit in
+   Animate mode, multi-bone group drag by one shared delta, and the
+   move-X/move-Y gizmo-handle axis constraint). Its bone-drag and
+   sprite-drag branches are both ported in full; only the mesh-vertex-drag
+   branch is deferred, documented in the file header, with the SAME two
+   causes as `updateMeshVertex` above (the asset pipeline for its entry
+   condition, `updateMeshVertex` itself for its per-frame write) — not a
+   new gap, the same one surfacing at a second call site. One
+   simplification made porting it: Swift's `onMouseDown`/`onMouseDrag` each
+   duplicate an identical "convert the drag into world space, applying the
+   active move-X/move-Y axis constraint" block once for bones and once for
+   sprites; factored into one private `computeDragPosition` helper here
+   since the two copies were byte-identical logic, not two different rules
+   that happen to look alike.
+
+   `ToolManager` + the other 6 tools are next, with a proven pattern to
    follow: each tool's manipulation math (drag deltas, snap, axis
    constraint) is independent of the picking gap, and every tool's
    `onMouseDown`/`onMouseUp` writes through `commitKeyframe`, `moveBoneRoot`/
