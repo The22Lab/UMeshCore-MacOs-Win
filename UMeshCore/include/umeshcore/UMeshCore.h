@@ -15,7 +15,7 @@
 // does not rebuild the world and so that a missing include is caught
 // where it happens. `HeaderSelfContainmentTests` compiles every header
 // below on its own, one translation unit each, to keep that true: every
-// one of these 97 headers stands alone today, and the test is what stops
+// one of these 102 headers stands alone today, and the test is what stops
 // the first one that does not from landing quietly.
 //
 // WHAT DOES NOT CROSS INTO SWIFT UNCHANGED is documented in
@@ -90,10 +90,15 @@
 #include "umeshcore/Editor/EditorEscape.h"
 #include "umeshcore/Editor/EditorScene.h"
 #include "umeshcore/Editor/GizmoHandle.h"
+#include "umeshcore/Editor/GraphViewport.h"
 #include "umeshcore/Editor/MeshOverlayMetrics.h"
 #include "umeshcore/Editor/MoveGizmoMetrics.h"
 #include "umeshcore/Editor/RotateGizmoMetrics.h"
+#include "umeshcore/Editor/SceneGizmoDrag.h"
+#include "umeshcore/Editor/SceneGizmoState.h"
+#include "umeshcore/Editor/SceneLightGizmo.h"
 #include "umeshcore/Editor/SkewGizmoMetrics.h"
+#include "umeshcore/Editor/TimelineGraphMath.h"
 #include "umeshcore/Editor/Tool.h"
 #include "umeshcore/Editor/ToolInput.h"
 #include "umeshcore/Editor/ToolManager.h"

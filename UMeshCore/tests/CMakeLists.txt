@@ -97,3 +97,8 @@ add_executable(HeaderSelfContainmentTests
     ${UMESHCORE_SELFTEST_SOURCES})
 target_link_libraries(HeaderSelfContainmentTests PRIVATE umeshcore)
 add_test(NAME HeaderSelfContainmentTests COMMAND HeaderSelfContainmentTests)
+umeshcore_add_test(SceneGizmoStateTests SceneGizmoStateTests.cpp)
+umeshcore_add_test(SceneGizmoDragTests SceneGizmoDragTests.cpp)
+umeshcore_add_test(SceneLightGizmoTests SceneLightGizmoTests.cpp)
+umeshcore_add_test(GraphViewportTests GraphViewportTests.cpp)
+umeshcore_add_test(TimelineGraphMathTests TimelineGraphMathTests.cpp)

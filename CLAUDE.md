@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-48 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+53 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -186,7 +186,124 @@ textura **cargada**, y no hay pipeline de decodificación de imágenes.
   los dos subsistemas está modelado en `EditorScene`.
 - `solveRigPose` / `rigPose(atFrame:)` de `SceneAnimator` — Fase 5.
 
-**Deuda marcada, primera mordida hecha** (Riesgo #6 del ROADMAP):
+**Deuda marcada, el gizmo de Scene ya fuera de la vista** (Riesgo #6):
+`Editor/SceneGizmoState.h` extrae la **forma** (basis por herramienta,
+cámara estabilizada, escala única, ejes/anillos/planos proyectados) y
+`Editor/SceneGizmoDrag.h` el **hit-test y el arrastre de una capa**. Toda
+medida se hace donde vive la pregunta: rayo-eje para trasladar, rayo-plano
+para los handles de plano, ángulo en el plano del propio anillo para rotar.
+Los tests reproducen el método de pantalla que sustituyen y lo muestran
+discrepando.
+
+Dos cosas documentadas y **no** arregladas: la cámara estabilizada
+magnifica el manipulador (los 19,5 px nominales dibujan 154), y el handle
+**central** (free-move / escala uniforme) es **inalcanzable** mientras haya
+un eje dibujado — los ejes empiezan *en* el origen, así que su distancia
+nunca es mayor, y el empate lo gana el eje. Medido: 2618 agarres alrededor
+del origen, **cero** al centro.
+
+**`Editor/SceneLightGizmo.h/.cpp`** ← `Render/SceneLightGizmo.swift`
+(253 L) + `lightWorldGeometry` sacado del overlay, más el arrastre de
+**luces** y de **cámara** en `SceneGizmoDrag`. 12 tests.
+
+Los handles de una luz se responden en el plano de mundo que **mira a la
+cámara**, y el header Swift lo justifica contando grados de libertad: un
+puntero da dos números, un radio quiere uno y una dirección dos, así que el
+mapa puntero→valor solo es biyectivo cuando se fija el grado que falta — y
+fijarlo al plano que el artista está mirando es lo que mantiene el punto
+agarrado bajo el puntero.
+
+Detalles que el port conserva y testea: al estirar el radio se preserva la
+**banda** en unidades de mundo (no la fracción, o la luz cambiaría de forma
+al redimensionarla); los ángulos del cono se leen en el **plano del propio
+cono**, no en el que mira a la cámara; y `aimLight` deja el azimut **quieto**
+en el polo, porque `atan2(0,0)` lo aplastaría a cero y sacar la luz del polo
+la lanzaría a donde nunca apuntó.
+
+`lightWorldGeometry` es **una sola geometría con dos consumidores**: los
+puntos que agarra el artista y los anillos/arcos que dibuja la GPU
+(rellena el `SceneGizmoLayout::LightDiagram` que la Fase 4 dejó definido y
+sin llenar).
+
+**`Editor/GraphViewport.h/.cpp`** ← `GraphViewport.swift` (302 L) +
+`GraphMetrics.swift` (59 L). 9 tests. Primer trozo de la deuda del
+timeline, y el correcto para empezar: los dos archivos ya estaban limpios
+(tipos de CoreGraphics y aritmética, sin cuerpo de vista) y el resto de
+`TimelineView.swift` los lee.
+
+El viewport existe por un bug concreto: el rango vertical se derivaba de
+los **valores de los keyframes**, y una cúbica entre dos claves no está
+acotada ni por sus claves ni por sus puntos de control — lo está por sus
+**propios extremos**. La curva se recortaba para caber en un rectángulo
+derivado de algo que no es la curva. La regla que el tipo impone: la curva
+y el viewport son independientes; nada recorta un valor para que quepa,
+`fitting` mueve la **vista**.
+
+El test no re-deriva la cuadrática: compara los extremos resueltos contra
+un muestreo denso de la curva (200 001 muestras) y exige que coincidan.
+
+Dos propiedades más, ambas con test: **toda proyección tiene inversa
+exacta** (un arrastre lee un píxel, guarda un valor y vuelve al mismo
+píxel), y el **suelo del zoom ensancha la vista sin moverla** — sin el
+ancla, re-centrarse en el suelo arrastra la imagen en cada paso (el harness
+Swift lo midió en 262% del ancho tras noventa pasos).
+
+Divergencia: `touchScale` es `#if os(iOS)` en Swift; aquí es un parámetro.
+El core no tiene plataforma, y además un shell Windows en modo tablet
+quiere la escala táctil en la misma máquina que quiere la de puntero.
+
+**`Editor/TimelineGraphMath.h/.cpp`** ← el editor de curvas, sacado del
+cuerpo de vista de `TimelineView.swift`. 14 tests. Segunda mordida de la
+deuda del timeline y la que cierra el editor de curvas: tangentes, puntos
+de control, las dos proyecciones de pantalla del gráfico, y el hit-test de
+handle / keyframe / curva.
+
+La propiedad que sostiene el archivo: **el gráfico dibuja la curva que
+suena**. Los puntos de control pasan por `AnimationCurve::segment`, la
+misma llamada que hace la reproducción. El header Swift cuenta las tres
+formas en que la geometría propia del gráfico discrepaba del evaluador, y
+cada una es una curva que el artista veía y nunca oía: sin clamp de punto
+de retorno dibujaba 100,65 sobre una clave de 100; sin clamp del punto de
+control al segmento, una S de 90 unidades de diferencia; y un fallback de
+0,35/0,65 contra el tercio del evaluador. Los tests **construyen la
+respuesta rota al lado de la portada** y las muestran discrepando — una
+aserción que solo dijera "el port se parece a sí mismo" pasaría igual de
+contenta con el bug de vuelta.
+
+Detalles conservados y testeados: un keyframe que **no** es bézier no se
+dibuja con su out-tangent guardado (la interpolación describe el segmento);
+los vecinos se pasan al evaluador porque **de ellos sale una auto-tangente**
+y el gráfico los tiene, mientras que el evaluador, trabajando segmento a
+segmento, no; y el suelo de 0,001 en escala no es cosmético — una escala
+cero es una matriz que deja de invertirse, y skinning, picking y gizmos la
+invierten.
+
+Los dos ejes se mapean con **reglas distintas a propósito**: X sigue siendo
+la fracción del clip porque el gráfico comparte mapeo con la regla y el
+playhead que tiene encima — pasarlo por el viewport sacaría los números de
+frame de registro con las claves debajo. Y es también la regla que decide
+qué par de tangentes usa un canal (`.x`/`.scalar` → primario, todo lo demás
+→ secundario): el caso que la rompió la primera vez fue `constraint.flag`,
+que no es ninguno de los dos.
+
+Dos divergencias, ambas forzadas por la plataforma:
+
+- El hit-test de una curva lo resolvía SwiftUI, dándole un `strokedPath`
+  como `contentShape`. Ese servicio no existe en el core ni en un shell
+  Windows, así que la pregunta se responde numéricamente
+  (`distanceToCurve`, aplanando el trazo), con el mismo ancho de agarre
+  (`GraphMetrics::curveGrabPx`).
+- Las tres funciones Swift equivalentes van a buscar los keyframes al
+  `sceneManager`. Aquí nada recibe una escena (convención #2): el llamante
+  pasa las muestras, el keyframe o los frames que ya tiene.
+
+No portado, y no por olvido: `smoothAutoTangent` ya está **borrado** en el
+Swift — su propio comentario explica que era la segunda respuesta, y
+discrepante, a lo que contesta `AnimationCurve::autoSlope`.
+
+Falta de la deuda SwiftUI: de `TimelineView.swift` (4326 L) queda lo que es
+cuerpo de vista de verdad (gestos, Paths, colores, llamadas a
+`sceneManager`).
 `ringFrame` y las constantes de geometría que el mesh builder del gizmo
 necesita ya están extraídas a `Render/SceneGizmoLayout.h` (Fase 4, pieza
 5). Lo demás sigue dentro de las vistas:
@@ -764,9 +881,13 @@ Lo primero que necesitan **6a y 6b** es lo mismo: que la librería sea
 
 ### Hecho
 
-- **`include/umeshcore/UMeshCore.h`** — el umbrella: los 97 headers
+- **`include/umeshcore/UMeshCore.h`** — el umbrella: los 102 headers
   públicos en un `#include`. Es para los shells, **no** para el código de
   dentro: un `.cpp` de `src/` sigue incluyendo solo lo que usa.
+  Ojo: el umbrella **no** se genera por glob (`HeaderSelfContainmentTests`
+  sí), así que un header nuevo hay que añadirlo a mano. Se había quedado
+  atrás con cinco (`GraphViewport`, `SceneGizmoState`, `SceneGizmoDrag`,
+  `SceneLightGizmo`, `TimelineGraphMath`) y están puestos.
 - **`include/module.modulemap`** — el módulo Clang que hace que
   `import UMeshCore` resuelva. Va **junto** al árbol de headers y no
   dentro, porque Clang lo busca en la raíz de un header search path.
@@ -778,7 +899,7 @@ Lo primero que necesitan **6a y 6b** es lo mismo: que la librería sea
   externo real que hace `find_package(UMeshCore)` y enlaza
   `UMeshCore::umeshcore` compila y corre.
 - **`HeaderSelfContainmentTests`** — compila **cada header público como su
-  propia unidad de traducción**, solo. Los 97 pasan hoy; el target existe
+  propia unidad de traducción**, solo. Los 102 pasan hoy; el target existe
   para que el primero que deje de pasar rompa *este* build y no el de un
   shell, meses después, con otro compilador.
 - **`bindings/swift/README.md`** y **`bindings/win/README.md`** — las
