@@ -111,23 +111,28 @@ static void testAlbedoRoleIsOmittedFromTheFile() {
 }
 
 static void testUnmodelledKeysSurviveTheRoundTrip() {
-    // A real project file carries sections this port does not model.
-    // They must come back out intact, not be dropped. Today that is
-    // `editorState` (platform-shell UI scalars, deliberately not owned
-    // here) and the Phase 5 Scene-compositing sections.
+    // A real project file carries sections this port does not model. They
+    // must come back out intact, not be dropped.
+    //
+    // Today that is `editorState` alone -- platform-shell UI scalars this
+    // port deliberately does not own. The Scene-compositing sections used
+    // to be here too; Phase 5 models them, so they graduated to real
+    // fields and `SavedSceneTests` covers them. That graduation is the
+    // point of the mechanism, not an exception to it: `unrecognized` is a
+    // holding pen, and a key leaving it is what progress looks like.
+    // A key must never be BOTH modelled and preserved, or it would be
+    // written twice through two different paths.
     ProjectDocument seed;
     JsonValue j = toJson(seed);
     j.set("editorState", JsonValue::parse("{\"timelineZoomScale\":1.75}"));
-    j.set("sceneCompositions", JsonValue::parse("[{\"name\":\"Shot 1\",\"fps\":24}]"));
-    j.set("sceneViewCamera", JsonValue::parse("{\"distance\":500}"));
+    j.set("someFutureSection", JsonValue::parse("{\"whatever\":[1,2,3]}"));
 
     const ProjectDocument document = projectDocumentFromJson(j);
-    UM_CHECK(document.unrecognized.size() == 3);
+    UM_CHECK(document.unrecognized.size() == 2);
 
     const JsonValue written = toJson(document);
     UM_CHECK_NEAR(written.find("editorState")->find("timelineZoomScale")->asDouble(), 1.75, 1e-9);
-    UM_CHECK(written.find("sceneCompositions")->asArray()[0].find("name")->asString() == "Shot 1");
-    UM_CHECK_NEAR(written.find("sceneViewCamera")->find("distance")->asDouble(), 500.0, 1e-9);
+    UM_CHECK(written.find("someFutureSection")->find("whatever")->asArray().size() == 3);
 }
 
 static void testHierarchyCameraAndAnimationsAreModelledNotPreserved() {

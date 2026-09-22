@@ -11,7 +11,6 @@ add_library(umeshcore STATIC
     Animation/AnimationLibrary.cpp
     Animation/SceneAnimator.cpp
     Model/Bone.cpp
-    Model/Scene/SceneModel.cpp
     Constraints/ConstraintPropagation.cpp
     Constraints/IKSolver.cpp
     Constraints/PathSolver.cpp
@@ -26,6 +25,10 @@ add_library(umeshcore STATIC
     Render/SceneLighting.cpp
     Render/SceneRenderBudget.cpp
     Render/SceneShaderMath.cpp
+    Scene/SceneLayer.cpp
+    Scene/SceneComposition.cpp
+    Scene/ScenePlayback.cpp
+    Export/ExportSettings.cpp
     Mesh/MeshKernel.cpp
     Mesh/MeshValidator.cpp
     Mesh/Mesh.cpp
@@ -37,6 +40,7 @@ add_library(umeshcore STATIC
     Editor/Tools/SkewTool.cpp
     Editor/Tools/RotateTool.cpp
     Editor/Tools/BoneTool.cpp
+    Editor/Tools/PhysicsPreviewTool.cpp
     Editor/ToolManager.cpp
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp
@@ -46,6 +50,7 @@ add_library(umeshcore STATIC
     Serialization/SavedAnimation.cpp
     Serialization/SavedEditorState.cpp
     Serialization/SavedGeometry.cpp
+    Serialization/SavedScene.cpp
     Serialization/SavedSceneImage.cpp
     Serialization/SavedSkeleton.cpp
     Serialization/UMJsonBuilder.cpp
@@ -64,3 +69,61 @@ if(MSVC)
 else()
     target_compile_options(umeshcore PRIVATE -Wall -Wextra)
 endif()
+
+# --- Install / export ---------------------------------------------------
+#
+# What makes UMeshCore consumable from outside this tree, which is the
+# whole of what Phase 6 needs before either shell can call anything.
+#
+# Two consumers, one export set:
+#   - Xcode (Phase 6a). The Mac app puts the installed `include/` on its
+#     header search path and links `libumeshcore.a`; `include/module.modulemap`
+#     travels with the headers, so `import UMeshCore` resolves.
+#   - CMake/MSVC (Phase 6b). `find_package(UMeshCore)` then link
+#     `UMeshCore::umeshcore`.
+#
+# The `module.modulemap` is installed NEXT TO the header tree rather than
+# inside it: Clang looks for it at the root of a header search path, so
+# `include/module.modulemap` alongside `include/umeshcore/` is the layout
+# that works. Installing it under `include/umeshcore/` would put it where
+# nothing looks for it.
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+install(TARGETS umeshcore
+        EXPORT UMeshCoreTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../include/umeshcore
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        FILES_MATCHING PATTERN "*.h")
+
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../include/module.modulemap
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(EXPORT UMeshCoreTargets
+        FILE UMeshCoreTargets.cmake
+        NAMESPACE UMeshCore::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/UMeshCore)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/UMeshCoreConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    # The port's own numbering is the PHASE, not a release, so nothing
+    # downstream should pin a patch level it cannot check. SameMajorVersion
+    # says what is actually promised: the surface does not break inside a
+    # major.
+    COMPATIBILITY SameMajorVersion)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/UMeshCoreConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/UMeshCoreConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/UMeshCore)
+
+install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/UMeshCoreConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/UMeshCoreConfigVersion.cmake"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/UMeshCore)

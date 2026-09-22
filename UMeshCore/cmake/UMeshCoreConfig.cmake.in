@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+# UMeshCore has NO external dependencies, by design (CLAUDE.md convention
+# #1: math, JSON, SHA-256 and the test harness are all hand-written). So
+# there is no `find_dependency` block here, and there should never be one
+# without that convention changing first.
+include("${CMAKE_CURRENT_LIST_DIR}/UMeshCoreTargets.cmake")
+
+check_required_components(UMeshCore)

@@ -1,0 +1,24 @@
+// The Clang module that lets Swift `import UMeshCore`.
+//
+// Swift/C++ interop imports a C++ library as a MODULE, not as a pile of
+// headers, so this file is what makes `import UMeshCore` resolve at all.
+// Xcode finds it by having `UMeshCore/include` on the target's header
+// search path; the exported CMake target (`UMeshCore::umeshcore`) carries
+// the same path for a CMake-driven build.
+//
+// `requires cplusplus20` is not decoration. Without it, a Swift target
+// that forgets `-cxx-interoperability-mode=default` gets a wall of
+// parse errors from inside `<variant>` rather than a clear "this is a
+// C++ module" diagnostic.
+//
+// ONE umbrella HEADER, deliberately, and not `umbrella "umeshcore"` over
+// the directory. A directory umbrella pulls in whatever happens to be on
+// disk, so a scratch header left in `include/` would silently join the
+// public surface; naming the file means the surface is a decision
+// somebody wrote down.
+module UMeshCore {
+    requires cplusplus
+    requires cplusplus20
+    header "umeshcore/UMeshCore.h"
+    export *
+}

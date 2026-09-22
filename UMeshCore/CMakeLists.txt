@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(UMeshCore LANGUAGES CXX)
+# The version is the PORT's phase numbering, not a release: 5.0 means
+# Phases 0-5 have landed. `SameMajorVersion` compatibility in the
+# installed config file says what that actually promises downstream.
+project(UMeshCore VERSION 5.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <fstream>
 
+#include "umeshcore/Scene/SceneComposition.h"
 #include "umeshcore/Serialization/BinaryReader.h"
 #include "TestHarness.h"
 
@@ -499,6 +500,235 @@ static void testAnimationsChunkMeshDeformFixRoundTrips() {
     UM_CHECK(reader.atEnd());
 }
 
+// ---- SCENES ------------------------------------------------------------
+
+namespace {
+
+// Three cards, deliberately created in an order that is NOT their stacking
+// order, so "written in draw order" is a real assertion and not one the
+// fixture satisfies by accident.
+SceneComposition makeComposition() {
+    SceneComposition composition;
+    composition.id = Uuid(0xABCD, 0x1234);
+    composition.name = "Shot 1";
+    composition.durationInFrames = 120;
+    composition.fps = 24;
+    composition.renderSize = Vec2(1280.0f, 720.0f);
+    composition.background = SceneFill::solid(Vec4(0.1f, 0.2f, 0.3f, 1.0f));
+    composition.camera.position = Vec2(5.0f, -7.0f);
+    composition.camera.positionZ = -900.0f;
+    composition.camera.fieldOfView = 50.0f;
+
+    SceneLayer front;
+    front.id = Uuid(1, 1);
+    front.name = "front";
+    front.sortingOrder = 30;
+    front.content = ScenePlateContent{Uuid(90, 90)};
+
+    SceneLayer back;
+    back.id = Uuid(2, 2);
+    back.name = "back";
+    back.sortingOrder = 0;
+    back.opacity = 0.5f;
+    back.isHidden = true;
+    back.content = SceneFillContent{SceneFill::solid(Vec4(1, 0, 0, 1))};
+
+    SceneLayer middle;
+    middle.id = Uuid(3, 3);
+    middle.name = "middle";
+    middle.sortingOrder = 10;
+    middle.content = SceneRigContent{Uuid(70, 70), 2.0f, 4, false};
+
+    composition.layers = {front, back, middle};
+    return composition;
+}
+
+// Walks past every chunk before SCENES, which is written last.
+BinaryReader readerAtScenesChunk(const std::vector<std::uint8_t>& blob, int chunksBefore) {
+    BinaryReader reader(blob);
+    (void)reader.readFileHeader();
+    for (int i = 0; i < chunksBefore; ++i) {
+        const auto chunk = reader.readChunkHeader();
+        reader.skip(chunk.size);
+    }
+    return reader;
+}
+
+} // namespace
+
+static void testNoCompositionsMeansNoScenesChunkAtAll() {
+    // Swift's own gate. A rig that never used Scene mode produces a file
+    // identical to one from before this chunk existed -- which is what
+    // lets a runtime that predates it keep reading the file.
+    TestFixture f = makeFixture();
+    BinaryExporter exporter;
+    const std::vector<std::uint8_t> without = exporter.exportScene(f.scene, f.assets);
+    const std::vector<std::uint8_t> withEmpty = exporter.exportScene(f.scene, f.assets, {});
+    UM_CHECK(without == withEmpty);
+
+    BinaryReader reader(withEmpty);
+    UM_CHECK(reader.readFileHeader().chunkCount == 6);
+}
+
+static void testScenesChunkAppearsAndIsCountedWhenThereAreCompositions() {
+    TestFixture f = makeFixture();
+    BinaryExporter exporter;
+    const std::vector<std::uint8_t> blob =
+        exporter.exportScene(f.scene, f.assets, {makeComposition()});
+
+    BinaryReader reader(blob);
+    const auto header = reader.readFileHeader();
+    UM_CHECK(header.chunkCount == 7);
+    UM_CHECK(header.payloadSize == reader.remaining());
+}
+
+static void testScenesChunkWritesLayersInDrawOrderBackFirst() {
+    // The chunk carries NO layer number, on purpose: what a player needs
+    // is the order, not the arithmetic that produced it. So the order on
+    // the wire is the only place the stacking survives, and writing the
+    // array raw would hand the runtime a stacking the editor never drew.
+    TestFixture f = makeFixture();
+    BinaryExporter exporter;
+    const std::vector<std::uint8_t> blob =
+        exporter.exportScene(f.scene, f.assets, {makeComposition()});
+
+    BinaryReader reader = readerAtScenesChunk(blob, 6);
+    const auto chunk = reader.readChunkHeader();
+    UM_CHECK(chunk.type == static_cast<std::uint32_t>(UMeshBinaryFormat::ChunkID::Scenes));
+    UM_CHECK(reader.readU16() == UMeshBinaryFormat::ChunkVersion::scenes);
+    UM_CHECK(reader.readU32() == 1); // one composition
+
+    UM_CHECK(reader.readUuid() == Uuid(0xABCD, 0x1234));
+    UM_CHECK(reader.readString() == "Shot 1");
+    UM_CHECK(reader.readU32() == 120);
+    UM_CHECK(reader.readU32() == 24);
+    UM_CHECK_NEAR(reader.readF32(), 1280.0, 1e-4);
+    UM_CHECK_NEAR(reader.readF32(), 720.0, 1e-4);
+
+    // Background: top then bottom, four components each.
+    UM_CHECK_NEAR(reader.readF32(), 0.1, 1e-6);
+    for (int i = 0; i < 7; ++i) (void)reader.readF32();
+
+    // Camera: pos.xy, z, rot3D.xyz, fov, near, far.
+    UM_CHECK_NEAR(reader.readF32(), 5.0, 1e-5);
+    UM_CHECK_NEAR(reader.readF32(), -7.0, 1e-5);
+    UM_CHECK_NEAR(reader.readF32(), -900.0, 1e-3);
+    for (int i = 0; i < 3; ++i) (void)reader.readF32(); // rotation3D
+    UM_CHECK_NEAR(reader.readF32(), 50.0, 1e-4);
+    (void)reader.readF32(); // nearZ
+    (void)reader.readF32(); // farZ
+
+    UM_CHECK(reader.readU32() == 3);
+
+    // Back first: "back" (0), "middle" (10), "front" (30) -- NOT the
+    // creation order the fixture used.
+    UM_CHECK(reader.readUuid() == Uuid(2, 2));
+    UM_CHECK(reader.readString() == "back");
+    UM_CHECK(reader.readU8() == 2); // fill
+    UM_CHECK(reader.readU8() == 1); // hidden
+    UM_CHECK_NEAR(reader.readF32(), 0.5, 1e-6);
+    // pos.xy(2) + z(1) + rot(1) + rot3D(3) + scale.xy(2) = 9.
+    for (int i = 0; i < 9; ++i) (void)reader.readF32();
+    // Fill payload: top then bottom.
+    UM_CHECK_NEAR(reader.readF32(), 1.0, 1e-6);
+    for (int i = 0; i < 7; ++i) (void)reader.readF32();
+
+    UM_CHECK(reader.readUuid() == Uuid(3, 3));
+    UM_CHECK(reader.readString() == "middle");
+    UM_CHECK(reader.readU8() == 0); // rig
+    UM_CHECK(reader.readU8() == 0); // not hidden
+    for (int i = 0; i < 10; ++i) (void)reader.readF32(); // opacity + the nine above
+    UM_CHECK(reader.readUuid() == Uuid(70, 70));
+    UM_CHECK_NEAR(reader.readF32(), 2.0, 1e-6); // speed
+    UM_CHECK(reader.readU32() == 4);            // startFrame
+    UM_CHECK(reader.readU8() == 0);             // loops
+
+    UM_CHECK(reader.readUuid() == Uuid(1, 1));
+    UM_CHECK(reader.readString() == "front");
+    UM_CHECK(reader.readU8() == 1); // plate
+    UM_CHECK(reader.readU8() == 0);
+    for (int i = 0; i < 10; ++i) (void)reader.readF32();
+    UM_CHECK(reader.readUuid() == Uuid(90, 90));
+
+    // The camera track block closes the composition. This fixture has no
+    // camera tracks, so the count is zero and the chunk ends exactly here.
+    UM_CHECK(reader.readU32() == 0);
+    UM_CHECK(reader.atEnd());
+}
+
+static void testCameraTracksAreWrittenOncePerComposition() {
+    // Every composition gets the SAME tracks, because they come from the
+    // project's single `sceneAnimationClip`. Swift's behaviour and the
+    // format's shape -- reproduced rather than "fixed", and asserted so
+    // that a later change to either is a deliberate one.
+    TestFixture f = makeFixture();
+    AnimationClip clip("scene");
+    clip.setTracks({
+        AnimationTrack(SceneAnimationTarget::camera(), AnimationTrackProperty::CameraTranslate,
+                       {Keyframe(0, Vector2Value{Vec2(3, 4)}, KeyframeInterpolation::Linear)}),
+        AnimationTrack(SceneAnimationTarget::camera(), AnimationTrackProperty::CameraFOV,
+                       {Keyframe(10, ScalarValue{60.0f}, KeyframeInterpolation::Linear)}),
+    });
+    f.scene.sceneAnimationClip = clip;
+
+    SceneComposition first = makeComposition();
+    first.layers.clear();
+    SceneComposition second = first;
+    second.id = Uuid(0xFEED, 0xBEEF);
+
+    BinaryExporter exporter;
+    const std::vector<std::uint8_t> blob =
+        exporter.exportScene(f.scene, f.assets, {first, second});
+
+    BinaryReader reader = readerAtScenesChunk(blob, 6);
+    (void)reader.readChunkHeader();
+    UM_CHECK(reader.readU16() == UMeshBinaryFormat::ChunkVersion::scenes);
+    UM_CHECK(reader.readU32() == 2);
+
+    for (int composition = 0; composition < 2; ++composition) {
+        (void)reader.readUuid();
+        (void)reader.readString();
+        (void)reader.readU32(); // duration
+        (void)reader.readU32(); // fps
+        for (int i = 0; i < 2 + 8 + 9; ++i) (void)reader.readF32();
+        UM_CHECK(reader.readU32() == 0); // no layers
+
+        // Both compositions carry the same two tracks, in clip order.
+        UM_CHECK(reader.readU32() == 2);
+        UM_CHECK(reader.readU8() == 0); // cameraTranslate
+        UM_CHECK(reader.readU32() == 1);
+        UM_CHECK(reader.readU32() == 0); // frame
+        UM_CHECK_NEAR(reader.readF32(), 3.0, 1e-6);
+        UM_CHECK_NEAR(reader.readF32(), 4.0, 1e-6);
+        UM_CHECK(reader.readU8() == 4); // cameraFOV
+        UM_CHECK(reader.readU32() == 1);
+        UM_CHECK(reader.readU32() == 10);
+        UM_CHECK_NEAR(reader.readF32(), 60.0, 1e-4);
+    }
+    UM_CHECK(reader.atEnd());
+}
+
+static void testDegenerateDurationAndFpsAreFlooredNotWrapped() {
+    // The fields are unsigned, so a zero or negative duration would wrap
+    // to four billion frames rather than read as "empty".
+    TestFixture f = makeFixture();
+    SceneComposition composition = makeComposition();
+    composition.layers.clear();
+    composition.durationInFrames = 0;
+    composition.fps = -5;
+
+    BinaryExporter exporter;
+    const std::vector<std::uint8_t> blob = exporter.exportScene(f.scene, f.assets, {composition});
+    BinaryReader reader = readerAtScenesChunk(blob, 6);
+    (void)reader.readChunkHeader();
+    (void)reader.readU16();
+    (void)reader.readU32();
+    (void)reader.readUuid();
+    (void)reader.readString();
+    UM_CHECK(reader.readU32() == 1);
+    UM_CHECK(reader.readU32() == 1);
+}
+
 UM_TEST_MAIN_BEGIN()
     testHeaderAndChunkCountExcludesScenes();
     testMetaChunkRoundTrips();
@@ -508,4 +738,9 @@ UM_TEST_MAIN_BEGIN()
     testImagesChunkFlagsAndBoneBindingRoundTrip();
     testMeshesChunkRoundTrips();
     testAnimationsChunkMeshDeformFixRoundTrips();
+    testNoCompositionsMeansNoScenesChunkAtAll();
+    testScenesChunkAppearsAndIsCountedWhenThereAreCompositions();
+    testScenesChunkWritesLayersInDrawOrderBackFirst();
+    testCameraTracksAreWrittenOncePerComposition();
+    testDegenerateDurationAndFpsAreFlooredNotWrapped();
 UM_TEST_MAIN_END()

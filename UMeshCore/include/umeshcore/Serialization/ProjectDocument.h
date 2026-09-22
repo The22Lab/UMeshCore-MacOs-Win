@@ -12,11 +12,14 @@
 // writing it back does not silently drop them.
 //
 // The same reasoning, taken further, motivates `unrecognized`: any
-// top-level key this port does not model yet -- today `editorState` (a bag
-// of platform-shell UI scalars this port deliberately does not own, see
-// `SavedEditorState.h`) and the Phase 5 Scene-compositing sections
-// (`sceneCompositions`/`selectedSceneCompositionID`/`sceneViewCamera`) --
-// is kept VERBATIM on read and written back out unchanged. Swift needs no such
+// top-level key this port does not model yet -- today `editorState`, a bag
+// of platform-shell UI scalars this port deliberately does not own (see
+// `SavedEditorState.h`) -- is kept VERBATIM on read and written back out
+// unchanged. The Scene-compositing sections
+// (`sceneCompositions`/`selectedSceneCompositionID`/`sceneViewCamera`)
+// used to ride there too; Phase 5 models them, so they have moved to real
+// fields below. `unrecognized` keeps doing its job for what is still not
+// modelled, and the end-to-end test that proves it still passes. Swift needs no such
 // mechanism, because its `Codable` models every field; this port models a
 // growing subset, and without this a load/save cycle through UMeshCore
 // would destroy a real project's Scene mode and animation library. A
@@ -44,6 +47,8 @@
 #include "umeshcore/Model/Skeleton.h"
 #include "umeshcore/Model/Skin.h"
 #include "umeshcore/Serialization/AssetRecord.h"
+#include "umeshcore/Render/SceneViewCamera.h"
+#include "umeshcore/Scene/SceneComposition.h"
 #include "umeshcore/Serialization/Json.h"
 
 namespace umeshcore {
@@ -73,6 +78,15 @@ struct ProjectDocument {
     std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> constraintSetupValues;
     std::vector<NamedAnimation> animations;
     std::optional<Uuid> activeAnimationID;
+
+    // Scene mode. Written only once the mode has been USED: an empty
+    // `sceneCompositions` omits the key entirely, and `sceneViewCamera`
+    // is tied to the compositions rather than to its own emptiness --
+    // that is what keeps files byte-stable for projects that never touch
+    // Scene, and there is nowhere to stand in a project with no set.
+    std::vector<SceneComposition> sceneCompositions;
+    std::optional<Uuid> selectedSceneCompositionID;
+    std::optional<SceneViewCamera> sceneViewCamera;
 
     // Top-level keys this port does not model yet, kept verbatim so a
     // round trip does not destroy them. See this file's header.

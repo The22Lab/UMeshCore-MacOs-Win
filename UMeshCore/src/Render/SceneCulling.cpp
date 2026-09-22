@@ -70,15 +70,28 @@ bool SceneFrustum::culls(const std::vector<Vec3>& hull, float margin) const {
 FrameRegion FrameRegion::bounding(
     const std::vector<Vec2>& points, float pad, int frameWidth, int frameHeight) {
     if (points.empty()) return FrameRegion(0, 0, 0, 0);
+    // The non-finite test runs over every point BEFORE the reduction, and
+    // over `pad` with them. Testing the reduced box instead is
+    // order-dependent and fails in the direction this file may not fail
+    // in: `std::min(finite, NaN)` returns the finite operand, so a NaN
+    // point anywhere but FIRST is swallowed by the reduction and the
+    // guard never sees it. Measured on the reduce-first form: the points
+    // {(10,10), (NaN,20)} gave (10,10)-(10,20) -- an EMPTY region, i.e.
+    // the layer skipped entirely -- while the same two points in the
+    // other order gave the whole frame. And a non-finite `pad`, which
+    // lands on all four edges, reached the cast and came back INT_MIN.
+    // One answer for all of them: an unknown means redraw everything.
+    if (!std::isfinite(pad)) return FrameRegion::whole(frameWidth, frameHeight);
+    for (const Vec2& point : points) {
+        if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
+            return FrameRegion::whole(frameWidth, frameHeight);
+        }
+    }
     Vec2 lo = points.front();
     Vec2 hi = points.front();
     for (std::size_t i = 1; i < points.size(); ++i) {
         lo = Vec2(std::min(lo.x, points[i].x), std::min(lo.y, points[i].y));
         hi = Vec2(std::max(hi.x, points[i].x), std::max(hi.y, points[i].y));
-    }
-    if (!std::isfinite(lo.x) || !std::isfinite(lo.y) || !std::isfinite(hi.x) ||
-        !std::isfinite(hi.y)) {
-        return FrameRegion::whole(frameWidth, frameHeight);
     }
     return FrameRegion(
         std::max(saturatingInt(std::floor(lo.x - pad)), 0),

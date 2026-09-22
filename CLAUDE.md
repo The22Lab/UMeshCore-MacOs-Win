@@ -29,6 +29,9 @@ UMeshCore-MacOs-Win/
     ├── ROADMAP.md               ← registro largo: el porqué de cada decisión
     ├── HANDOFF.md               ← traspaso: decisiones abiertas y por dónde seguir
     ├── README.md
+    ├── bindings/swift/          ← auditoría de interop Swift (Fase 6a)
+    ├── bindings/win/            ← notas de consumo WinUI 3 (Fase 6b)
+    ├── include/module.modulemap ← el módulo Clang: `import UMeshCore`
     ├── include/umeshcore/<Módulo>/*.h
     ├── src/<Módulo>/*.cpp
     └── tests/                   ← un binario por archivo portado
@@ -47,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-42 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+48 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -108,8 +111,8 @@ errores reales.
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
 | 4 | Capa de geometría de render compartida | ✅ Completa (1 pieza descartada: código muerto) |
-| **5** | **Scene compositing, luces, física secundaria, export** | **🔨 En curso — modelo portado** |
-| 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
+| **5** | **Scene compositing, luces, física secundaria, export** | **✅ Completa** |
+| **6a** | **Migrar la app Mac a consumir UMeshCore** | **🔨 En curso — la librería ya es consumible** |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
 
 ### Fase 1 — Math + modelo de datos ✅
@@ -155,9 +158,16 @@ textura **cargada**, y no hay pipeline de decodificación de imágenes.
 
 **Pendiente, por otras razones:**
 
-- **`PhysicsPreviewTool`** (59 L) — mecánicamente trivial, pero su
-  override de pose no tiene consumidor: `EditorScene` no posee una
-  instancia viva de `PhysicsConstraintSystem`. Se desbloquea en Fase 5.
+- **`PhysicsPreviewTool`** (59 L) — **portado en Fase 5**, y el
+  diagnóstico que había aquí estaba equivocado a medias. Decía que estaba
+  bloqueado hasta que `EditorScene` tuviera un `PhysicsConstraintSystem`
+  vivo. No lo está: un sistema vivo leería `baseWorldMatrices()` igual que
+  el de Swift y **seguiría sin ver el override**, porque en Swift
+  *tampoco* lo lee nadie. Verificado por grep: `physicsPreviewOverrides`
+  tiene exactamente tres menciones — la declaración y los dos métodos que
+  la escriben. Es una feature sin terminar aguas arriba, no un hueco de
+  traducción, así que se porta con la misma forma y el mismo efecto
+  (ninguno), documentado en el header.
 - Los intercepts de IK-builder y Bind-Mode en `ToolManager` — ninguno de
   los dos subsistemas está modelado en `EditorScene`.
 - `solveRigPose` / `rigPose(atFrame:)` de `SceneAnimator` — Fase 5.
@@ -177,8 +187,8 @@ directamente es mucho más arriesgado que extraer primero en el Mac.
 Tres formatos, los tres portados:
 
 - **Binario UMSH**: formato, `BinaryWriter`, `BinaryReader` (código nuevo
-  — el escritor Swift no tiene lector), y `BinaryExporter` con 6 de 7
-  chunks.
+  — el escritor Swift no tiene lector), y `BinaryExporter` con **los 7
+  chunks** (SCENES cerrado en Fase 5).
 - **`.umesh` nativo**: módulo JSON propio, todas las conversiones
   `Saved*`, el manifiesto `ProjectDocument`, y la capa de paquete
   (directorio + `Assets/` con deduplicación SHA-256, escritura atómica,
@@ -188,9 +198,9 @@ Tres formatos, los tres portados:
   unidades preservadas por campo (un hueso usa radianes para shear; un
   sprite usa **grados**).
 
-**Pendiente:** `writeScenesChunk` y las secciones de Scene-compositing del
-manifiesto → Fase 5. Embebido base64 de texturas en UMJSON (`AssetRecord`
-lleva ruta, no bytes).
+**Pendiente:** embebido base64 de texturas en UMJSON (`AssetRecord` lleva
+ruta, no bytes). `writeScenesChunk` y las secciones de Scene del manifiesto
+ya están cerrados por Fase 5.
 
 **Permanente:** `SavedEditorState` (escalares de UI de `AppState`) no se
 porta — es estado de shell. Se preserva textualmente vía
@@ -247,11 +257,9 @@ centro de la pantalla". Aquí hay una sola: `cameraBasis`, ya en
 `SceneProjection.h`. El test que lo cubre es exactamente ese: el pivote se
 queda en el centro exacto tras dieciséis órbitas.
 
-`cardCorners`/`cardPoint` ya no están pendientes: viven en
-`Model/Scene/SceneRenderAdapters.h` (Fase 5), del lado del modelo. La
-dirección importa — Render no conoce el modelo, el modelo conoce a Render —
-porque el scoping de la Fase 4 existía justo para que un backend de Metal o
-DirectX pudiera consumir la matemática sin arrastrar el compositing detrás.
+No portado: `cardCorners`/`cardPoint` — toman un `SceneLayer` y llaman a su
+`liftToWorld`; eso es Fase 5, e inventar el tipo ahora obligaría a
+re-transcribir ese lift, el fallo que el propio archivo advierte.
 
 **`Render/SceneGPUTypes.h`** ← `Render/SceneGPU/SceneGPUTypes.swift` (278 L).
 Los structs POD que lee el shader, byte a byte. 8 tests.
@@ -524,59 +532,274 @@ Si aparecen en otra copia del proyecto, traerlos seguiría siendo valioso.
 
 ---
 
-## Fase 5 — en curso
+## Fase 5 — completa
 
-Todo el namespace de Scene compositing, en `Data/Scene/` (1825 L).
+Todo el namespace de Scene compositing, en `Data/Scene/`. Portarlo cierra
+de golpe cinco pendientes: el chunk SCENES, las secciones de manifiesto
+que hoy viven en `unrecognized`, los dos constructores de conveniencia de
+`SceneProjection`, `cardCorners`/`cardPoint` de la cámara de vuelo, y
+`PhysicsPreviewTool`.
 
-### Hecho — el modelo
+### Hecho
 
-**`Model/Scene/`** ← `SceneLayer.swift` (282) + `SceneComposition.swift`
-(241, menos `SceneViewCamera` que ya estaba) + `SceneCamera.swift` (59) +
-`SceneMaterial.swift` (238) + la mitad de modelo de `SceneLight.swift`.
-16 tests.
+**`Scene/SceneLayer.h/.cpp`** ← `Data/Scene/SceneLayer.swift` (282 L):
+`SceneFill`, `SceneLayerContent` (variant de rig/plate/fill) y
+`SceneLayer`. **`Scene/SceneMaterial.h`** ← `SceneMaterial.swift` (238 L).
+**`Scene/SceneLightMask.h`**, sacado de `SceneLight.swift` a un header
+propio porque lo necesitan tres cosas y solo una es una luz (la capa, el
+material y la luz) — meterlo en el header de la luz obligaría a una capa a
+incluir una luz para describirse. 31 tests.
 
-- `SceneMaterial.h` — relieve, wrap, contraste, parallax y máscaras de
-  sombra. `flat()` no es "un punto de partida razonable": es la superficie
-  que Scene siempre dibujó, y la promesa de que un proyecto anterior
-  renderiza **bit a bit** igual. `sanitized()` recorta lo que a la vista
-  parece otro bug (un `smoothness` negativo parece una luz invertida; un
-  `parallaxDepth` negativo parece el artwork deslizándose de su carta).
-- `SceneLight.h` — el **modelo**; la matemática ya estaba en Fase 4 y este
-  archivo **no la repite**: `SceneLightKind`/`SceneLightBlend` son los
-  enums de `Render/SceneLighting.h`, usados aquí, no declarados otra vez.
-  `SceneLight::params()` es la costura única hacia `SceneLightParams`.
-- `SceneLayer.h` — la carta. `planePoint` (escala → shear → roll, y el
-  orden **es** la definición), `liftToWorld` (lineal y ortonormal),
-  `orientation()` (la rotación de la que cuelga un manipulador),
-  `lightingPlane`/`lightingTangent` y `rigFrame`.
-- `SceneComposition.h` — el orden de dibujo es `sortingOrder` con el array
-  rompiendo empates, **estable**; la profundidad no reordena nada. Sin
-  atajo `lighting()`: el Swift registra que existió un commit y era una
-  trampa (construía la iluminación de las luces *autoradas*, saltándose el
-  muestreo por frame).
-- `SceneCamera.h` + `SceneRenderAdapters.h` — cierran los dos constructores
-  de conveniencia de `SceneProjection` y `cardCorners`/`cardPoint`. Los
-  adaptadores viven del lado del **modelo** a propósito: Render no debe
-  conocer el compositing.
+Esto desbloquea `cardCorners`/`cardPoint` de `SceneViewCamera` y el
+`orientation()` que espera `SceneLayerUniforms`.
 
-Los tests reproducen el bug del gizmo en vez de describirlo: la
-orientación de una carta con shear es ortonormal, y el frame que se sacaba
-diferenciando `planePoint` **no lo es** (se comprueba que el ángulo entre
-sus ejes se desvía de forma visible).
+**`Scene/SceneComposition.h/.cpp`** ← la mitad `SceneComposition` de
+`SceneComposition.swift` (241 L). **`Scene/SceneCamera.h`** ←
+`SceneCamera.swift` (59 L), que cierra `SceneProjection::init(camera:)`
+(vive en el header de Scene, no en el de Render, para que la dependencia
+apunte en un solo sentido). **`Scene/SceneLight.h`** ← la mitad *modelo*
+de `SceneLight.swift`: la matemática ya estaba en `Render/SceneLighting.h`
+y no se retranscribe — `SceneLight::params()` llena un `SceneLightParams`
+y `direction()`/`innerRadius()`/`bandWidth()` se las pide a las funciones
+que ya existen. `SceneAmbient` **tampoco** se re-declara: ya estaba en
+`Render/SceneLighting.h`. 23 tests.
+
+- **El orden del array de capas NO es el orden de dibujo.** Solo rompe
+  empates. `drawOrderedLayers()` ordena por `(sortingOrder, índice)`
+  explícitamente porque ni el sort de Swift ni `std::sort` son estables, y
+  dos cartas de la misma capa intercambiándose entre arranques es un set
+  que se reordena solo.
+- **Un enum, dos nombres.** `SceneLightKind`/`SceneLightBlend` son los
+  enums que ya declara `Render/SceneLighting.h`; el modelo solo añade sus
+  `rawValue` de texto, que son la ortografía del **formato de archivo**.
+  Nunca un cast: un cast haría que el archivo guardado dependiera del
+  orden de declaración.
+
+**`Serialization/SavedScene.h/.cpp`** ← `Data/Scene/ScenePersistence.swift`
+(463 L), más el cableado en `ProjectDocument`. 26 tests.
+
+Cierra uno de los pendientes más viejos del port: las secciones
+`sceneCompositions` / `selectedSceneCompositionID` / `sceneViewCamera`
+**salen de `ProjectDocument::unrecognized`** y pasan a campos reales.
+`unrecognized` sigue haciendo su trabajo con lo que aún no se modela (hoy
+solo `editorState`), y el test de punta a punta que lo demuestra sigue
+pasando — ahora acompañado de otro que comprueba que el modo Scene
+sobrevive un ciclo real a disco **como valores**, que es una garantía más
+fuerte que JSON opaco.
+
+Cada concesión de compatibilidad es **por campo** y nombra su escenario:
+
+- `material` ausente → superficie **plana**. No es un "neutro aproximado":
+  `isFlat` cierra una rama en la que el shader ni entra, así que "renderiza
+  bit a bit como antes" sobrevive.
+- `sortingOrder` ausente → **el índice en el archivo**. Antes de que las
+  capas tuvieran número, el apilado *era* el orden del array. Cero daría el
+  mismo orden por suerte, y dejaría de darlo en cuanto alguien tocara un
+  número.
+- `lightMask` ausente → canal 1 y `receivesLight` true, que es lo que hace
+  que una luz añadida después a una escena vieja llegue a algo.
+- Un `parallaxMode` que este build no conoce → **`off`**, nunca el más
+  parecido: elegir el más parecido renderizaría al artista una escena que
+  nunca compuso y le dejaría guardarla encima.
+- Una capa sin el payload de su tipo se **descarta**, no se inventa.
+
+Y los rangos se aplican **al entrar**, no solo en el inspector: un archivo
+editado a mano no puede producir una cámara que divida por `tan(0)`, un
+cono con el interior mayor que el exterior (el smoothstep correría al
+revés: un foco iluminado del revés), ni una máscara vacía. Ojo al detalle
+asimétrico: la máscara vacía de una **luz** restaura a *todos* los canales
+y la de una **capa** al canal 1 — responden preguntas distintas.
+
+Una escena vacía **no escribe nada**: sin composiciones no se emite
+`sceneCompositions` ni `sceneViewCamera`, que es lo que mantiene los
+archivos byte-estables para proyectos que nunca tocan el modo Scene.
+
+**Chunk SCENES** (`BinaryExporter::writeScenesChunk`), diferido desde Fase
+3 y ahora cerrado: el séptimo y último chunk del binario UMSH. Las
+composiciones se **inyectan** en `exportScene` (igual que los assets), no
+viven en `EditorScene`. Dos cosas que conviene saber:
+
+- Las capas se escriben **en orden de dibujo**, de atrás hacia delante, y
+  el chunk **no lleva número de capa**: lo que un player necesita es el
+  orden, no la aritmética que lo produjo. Escribir el array crudo le daría
+  al runtime un apilado que el editor nunca dibujó.
+- Las pistas de cámara se escriben **una vez por composición** y todas
+  reciben las mismas, porque salen del único `sceneAnimationClip` del
+  proyecto. Es el comportamiento de Swift y la forma del formato: se
+  reproduce, no se "arregla" — pero implica que hoy el formato no puede
+  expresar animación de cámara por composición.
+- El shear y el material **no** están en el chunk. Es el layout de Swift:
+  el formato de runtime es anterior a ambos, y añadir campos a un chunk
+  congelado sin subir la versión es como un lector empieza a parsear el
+  siguiente registro como parte de este.
+
+Un bug encontrado por un test durante este incremento: `frontSortingOrder`
+usaba el `-1` de Swift como semilla del máximo en vez de como valor para
+el caso vacío, así que una escena con todas las capas en órdenes negativos
+devolvía 0 — poniendo la carta nueva *detrás* de las que debía encabezar.
+
+Tres cosas que conviene saber antes de tocarlo:
+
+- **La invariante fundacional: toda capa es PLANA.** Su Z es constante en
+  toda la carta. Es lo que colapsa la perspectiva a un solo factor de
+  escala, lo que hace que el parallax no cueste nada, y —menos obvio— lo
+  que hace la **iluminación exacta**: `SceneLighting` interseca el rayo de
+  un píxel con `lightingPlane()` y obtiene el punto de mundo que de verdad
+  está ahí, contenga lo que contenga la capa.
+- **`orientation()` existe aparte de `planePoint` por un bug entero.** El
+  gizmo sacaba su frame diferenciando la transformada de la carta, que
+  pasa por `planePoint` — escala, **shear**, roll. Normalizar los dos
+  vectores arreglaba sus longitudes y no podía hacer nada con el **ángulo**
+  entre ellos, así que una carta con shear le daba al gizmo un frame que
+  no era una rotación. `orientation()` es roll y luego tilt: ni la escala
+  ni el shear lo alcanzan.
+- **`sortingOrder` y `positionZ` van al revés a propósito.** Mayor
+  `sortingOrder` es **más al frente**; mayor `positionZ` es **más lejos**.
+  Y la profundidad **no reordena nada**: empujar una carta en Z cambia
+  cuánto mide y cuánto se desliza, nunca quién tapa a quién.
+
+`planePoint` es escala → shear → roll, y **ese orden es la definición**:
+el shear va en unidades ya escaladas, igual que `SceneImage` aplica skew.
+
+**`Scene/ScenePlayback.h/.cpp`** ← `ScenePlayback.swift` (105 L) y
+**`Scene/SceneSelection.h`** ← `SceneSelection.swift` (47 L). 18 tests.
+
+- **Scene tiene su propio reloj**, y no es capricho: el rig reproduce a
+  `projectFramesPerSecond` entre sus frames de playback; una escena tiene
+  su `durationInFrames` y su `fps` — un shot a 24 puede montar un rig
+  animado a 60. Y conducir la escena desde el playhead del rig rompería lo
+  que Scene *es*: cada instancia mapea el frame de escena al suyo por
+  velocidad/offset/loop, así que tres pájaros del mismo rig aletean
+  desacompasados; con el reloj del rig se moverían todos igual.
+- **Nada se acumula.** La sesión es `(startTime, startFrame, fps, bounds)`
+  y el playhead es **función pura del tiempo**. Un transport que avanzara
+  por delta correría *lento* en una máquina que pierde frames, convirtiendo
+  un frame caído en tiempo perdido y separándose del audio y del export.
+  Derivado del tiempo, un frame que no se puede entregar cuesta una
+  *muestra* del movimiento, nunca un paso.
+- **El reloj se inyecta.** Swift usa `CACurrentMediaTime()` por defecto; no
+  hay equivalente portable y el core no tiene por qué tenerlo, así que cada
+  entrada recibe el instante. Beneficio extra: el transport es exactamente
+  testeable.
+
+Documentado por un test: una muestra tomada **exactamente** en el borde de
+un frame es ambigua por un ulp cuando el reloj va por los miles de segundos
+(`(1000.0 + 1/24) - 1000.0` sale 4e-14 corto). Es inherente a la resta en
+double, idéntico en Swift, y **inofensivo justamente por la regla de
+arriba**: el error está acotado a una muestra y no se arrastra.
+
+**`Editor/Tools/PhysicsPreviewTool.h/.cpp`** ← `PhysicsPreviewTool.swift`
+(59 L), registrado ya en `ToolManager`. 11 tests.
+
+El hallazgo: **el override de pose no tiene consumidor, tampoco en Swift**
+(ver arriba). El tool sí está **vivo** —la tecla "y" y el menú de
+constraints lo seleccionan—, así que no es código muerto como
+`ArcGeometryBuilder`; es una feature a medio terminar, y se porta tal cual.
+Un test afirma exactamente eso: arrastrar un hueso no cambia una sola
+matriz de mundo. Si algún día se añade el lector, **ese** test es el que
+debe fallar.
+
+Su hit-test es geometría real y tiene reglas **propias**, distintas de las
+de `BoneTool`: candidatos son los **dos extremos** de cada hueso (el
+segmento entre ellos no es agarrable), gana el más cercano, y el radio es
+un 14 fijo que **no** se escala para táctil.
+
+**`Export/ExportSettings.h/.cpp`** ← `Export/ExportSettings.swift` (158 L)
++ los tres enums `String`-backed que sostiene. 16 tests.
+
+Cruza porque **es un formato compartido**: el preset que escribe el botón
+Save existe "para que la configuración de export viaje con el equipo", así
+que el build de Mac y el de Windows tienen que coincidir campo por campo y
+token por token, o un preset guardado en uno se abre mal en el otro.
+
+Divergencia documentada: **todos los campos son opcionales al leer**, con
+el valor de un `ExportSettings` recién construido como defecto, y un token
+de enum desconocido conserva el defecto. El `Codable` de Swift es más
+estricto y lanzaría ante una clave ausente — pero un preset viaja entre
+máquinas y entre versiones de la app, así que rechazarlo entero por una
+clave es justo el fallo que esto evita.
+
+**`ExportManager.swift` (135 L) NO se porta**: es orquestación y casi todo
+es plataforma (`PNGFrameSource` sobre un renderer offscreen de Metal,
+`VideoExporter` sobre el escritor H.264 de AVFoundation,
+`SceneFrameRenderer`, `URL`, `async`/`Task`). Lo único que es lógica y no
+cableado son dos cosas, y ninguna vive ahí:
+
+- La guarda que impide escribir un `.umesh` plano **encima de un paquete
+  de proyecto**. Es real e importa —comparten extensión por diseño, así que
+  el "¿reemplazar?" del panel de guardado parece razonable y decir que sí
+  destruye el proyecto—, y este port ya la tiene como `classifyProjectFile`
+  en `Serialization/ProjectPackage.h`, donde vive el sniffing.
+- El nombrado de subdirectorio por clip del batch
+  (`parentDirectory/{clipName}/`): una línea de join alrededor de un
+  exporter de plataforma.
 
 ### Pendiente
 
-- **`ScenePersistence.swift` (463)** — cierra el chunk SCENES y saca de
-  `ProjectDocument::unrecognized` las secciones de Scene. El test de punta
-  a punta de `unrecognized` debe seguir pasando para lo que siga sin
-  modelarse.
-- **`ScenePlayback.swift` (105)** y **`SceneSelection.swift` (47)**.
-- **El muestreo por frame** — `sceneLighting(for:atFrame:)` y las pistas de
-  animación de luces/cámara viven en `SceneManager` (god object); hay que
-  inyectar lo necesario, no portarlo.
-- **`PhysicsPreviewTool`** (Fase 2) — necesita que `EditorScene` tenga una
-  instancia viva de `PhysicsConstraintSystem`.
-- **Export**: `Export/ExportManager.swift` (135) + `ExportSettings.swift`.
+Nada de Fase 5. Lo que sigue son las fases 6a/6b y la deuda arrastrada de
+fases anteriores (Fase 1: 3 conveniencias de `Mesh`; Fase 2: todo lo
+bloqueado por el pipeline de alfa, `MeshTool`, y la deuda SwiftUI de
+`SceneGizmoOverlay`/`TimelineView`; Fase 3: base64 de texturas en UMJSON).
+
+---
+
+## Fase 6 — la fase actual
+
+Lo primero que necesitan **6a y 6b** es lo mismo: que la librería sea
+**consumible desde fuera**. Eso ya está.
+
+### Hecho
+
+- **`include/umeshcore/UMeshCore.h`** — el umbrella: los 97 headers
+  públicos en un `#include`. Es para los shells, **no** para el código de
+  dentro: un `.cpp` de `src/` sigue incluyendo solo lo que usa.
+- **`include/module.modulemap`** — el módulo Clang que hace que
+  `import UMeshCore` resuelva. Va **junto** al árbol de headers y no
+  dentro, porque Clang lo busca en la raíz de un header search path.
+  Lleva `requires cplusplus20` a propósito: sin él, un target que se
+  olvide de `-cxx-interoperability-mode=default` recibe un muro de errores
+  desde dentro de `<variant>` en vez de un diagnóstico claro.
+- **Reglas de `install` / `export`** + `UMeshCoreConfig.cmake`.
+  Verificado de punta a punta: `cmake --install` y luego un proyecto
+  externo real que hace `find_package(UMeshCore)` y enlaza
+  `UMeshCore::umeshcore` compila y corre.
+- **`HeaderSelfContainmentTests`** — compila **cada header público como su
+  propia unidad de traducción**, solo. Los 97 pasan hoy; el target existe
+  para que el primero que deje de pasar rompa *este* build y no el de un
+  shell, meses después, con otro compilador.
+- **`bindings/swift/README.md`** y **`bindings/win/README.md`** — las
+  notas de consumo de cada plataforma.
+
+### La auditoría de interop, en corto
+
+La mayor parte de la superficie cruza a Swift **sin tocar nada**, y no es
+casualidad: cero dependencias externas (convención #1) significa que no hay
+un tipo de terceros en ninguna firma. Lo que no cruza limpio es un conjunto
+**pequeño y acotado** — por eso la respuesta es una fachada y no una capa
+C ABI sobre todo:
+
+| Construcción | Sitios | Qué hacer |
+|---|---|---|
+| `std::variant` | 3 (`KeyframeValue`, `GizmoHandle`, `SceneLayerContent`) | Discriminante + accesores `optional<T>` **junto** al variant, no en su lugar: el `std::visit` de C++ conserva la exhaustividad. |
+| typedef de `std::function` | 1 (`ImageHitTestFn`) + 1 parámetro | Sobrecarga con puntero a función C + `void*`. Se decide **junto** con el pipeline de alfa de Fase 2 — es el mismo punto de inyección. |
+| Bases con virtuales puras | 3 (`Tool`, `Constraint`, `CanvasActivity`) | Nada: el shell las **consume**, no las implementa. |
+| Accesores que devuelven referencia | 14 | Por valor los que lee una vista. Swift no da garantía de lifetime, y este port ya se llevó dos mordiscos de esa clase **en C++**. |
+
+Detalle completo, con el porqué de cada decisión, en
+`bindings/swift/README.md`.
+
+### Pendiente
+
+Las fachadas **no** están escritas, a propósito: el orden razonable es
+escribirlas *cuando una vista concreta del Mac las pida*. Una fachada
+especulativa es una segunda API que mantener, y la migración de 6a es
+progresiva por decisión explícita del usuario.
+
+Lo demás de Fase 6 sigue sin empezar (rewire de las vistas del Mac,
+andamiaje del shell WinUI 3 + DirectX), y ninguno de los dos se puede
+compilar ni verificar en este entorno Linux.
+
+---
 
 ## Riesgos nombrados
 

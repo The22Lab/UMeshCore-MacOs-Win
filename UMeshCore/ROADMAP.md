@@ -1089,7 +1089,23 @@ Special-case validation needs, carried over into each phase's own tests:
    and inventing a layer type now would mean re-transcribing that lift --
    the failure the file itself warns about.
 
-   Tested: `tests/SceneCullingTests.cpp` (10 tests) and
+   **Follow-up fix (same file, landed after Phase 4 closed).**
+   `FrameRegion::bounding` tested for non-finite coordinates on the
+   REDUCED box, which made the answer depend on where the NaN sat and got
+   it wrong in the forbidden direction. `std::min(finite, NaN)` returns
+   the finite operand, so a NaN point anywhere but first was swallowed by
+   the reduction and never reached the guard. Measured: the points
+   `{(10,10), (NaN,20)}` gave `(10,10)-(10,20)` -- an EMPTY region, i.e.
+   the layer skipped altogether -- while the same two in the other order
+   gave the whole frame. A non-finite `pad`, which lands on all four
+   edges, was not guarded at all and reached the int conversion, coming
+   back `INT_MIN`. The test is now per point and covers `pad`, so every
+   unknown gets the one conservative answer the header promises. Swift is
+   exposed to the identical thing through fmin-based `simd_min`; this is
+   a documented divergence in the safe direction, not a transcription
+   slip. Two regression tests pin it (12 tests in the file now).
+
+   Tested: `tests/SceneCullingTests.cpp` (10 tests originally) and
    `tests/SceneViewCameraTests.cpp` (9 tests). The culling tests check the
    asymmetric rule against `SceneProjection` itself over 4000 random
    cameras and points -- anything the projection would actually draw is
@@ -1443,8 +1459,478 @@ Special-case validation needs, carried over into each phase's own tests:
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)
    with platform-swapped codec backends behind a common interface.
+   *Status: started.* `Scene/SceneLayer.h/.cpp` ports
+   `Data/Scene/SceneLayer.swift` (`SceneFill`, `SceneLayerContent`,
+   `SceneLayer`), `Scene/SceneMaterial.h` ports
+   `Data/Scene/SceneMaterial.swift`, and `Scene/SceneLightMask.h` lifts
+   `SceneLightMask` out of `SceneLight.swift` into a header of its own.
+
+   The mask gets its own file because three different things need it and
+   only one of them is a light: a layer's `lightMask` says which channels
+   it sits on, a material's `shadowCastMask`/`shadowedMask` say which it
+   casts into and catches from, and a light's `mask` says which it
+   reaches. Leaving it in the light's header would make a layer include a
+   light in order to describe itself, which is backwards -- the mask is
+   the vocabulary the three share, not a property of any one of them.
+
+   `SceneLayer` first because it is what the earlier phases were waiting
+   on, and they were waiting on purpose. `SceneViewCamera`'s header names
+   `cardCorners`/`cardPoint` as blocked on `planePoint`/`liftToWorld`/
+   `worldOrigin`, and `SceneLayerUniforms` on `orientation()`; inventing a
+   layer type inside Render would have meant re-transcribing this lift,
+   which is the "two transcriptions of a rotation" failure
+   `SceneProjection`'s header exists because of. There is now exactly one
+   transcription.
+
+   What the file is built around, and what the tests assert rather than
+   restate:
+   - **Every layer is FLAT** -- its Z is constant across the whole card.
+     That is what collapses the perspective to a single scale factor, what
+     makes parallax cost nothing, and, less obviously, what makes LIGHTING
+     exact rather than approximate: `SceneLighting` intersects the ray
+     through a pixel with `lightingPlane()` and gets the world point that
+     is actually there, whatever the layer contains and however its meshes
+     are deformed.
+   - **`orientation()` is separate from `planePoint` because of a whole
+     bug.** The gizmo used to take its frame by differencing the card's
+     transform, which runs points through `planePoint` -- scale, then
+     SHEAR, then roll. Normalising the two vectors that came back fixed
+     their lengths and could do nothing about the ANGLE between them, so a
+     sheared card handed the gizmo a frame that was not a rotation, and a
+     matrix like that shears every arrow it multiplies. `orientation()` is
+     roll then tilt, with no path for scale or shear to reach it. The test
+     therefore checks orthogonality, not length: length alone is exactly
+     what the broken version already had.
+   - **`planePoint` is scale, then shear, then roll, and that order IS the
+     definition.** Shear after the scale means it is expressed in the
+     card's scaled units -- the same order `SceneImage` applies skew in --
+     so a scaled card slants by the amount the number says rather than by
+     that amount times its scale. The test uses a non-uniform scale,
+     because a uniform one cannot tell the two orders apart.
+   - **`lightingTangent` reads only the SIGN of the scale.** A mirrored
+     card draws its artwork reversed, so image +x points the other way and
+     the handedness is `sign(scale.x * scale.y)`; a card that is not told
+     it is mirrored lights its relief from the wrong side, which is
+     entirely plausible in a still and obvious the moment a light crosses
+     it. The magnitude is deliberately left out, so relief does not
+     stretch with a card scaled 3x wide.
+   - **`sortingOrder` and `positionZ` count in opposite directions**, on
+     purpose: Z is a distance and things further off have more of it,
+     while a stacking order counts upward towards the viewer in every tool
+     that has one. Depth still reorders nothing.
+
+   One documented divergence, the same one `SceneCulling.cpp` already
+   makes and for the same reason: `rigFrame` converts
+   `round(sceneFrame * speed)` through a saturating cast. Swift traps on a
+   value outside `Int`, and the conversion is undefined in C++; a NaN
+   speed out of a hand-edited file is what reaches it. The clamp or wrap
+   that follows puts any saturated value back inside the clip, so no
+   in-range input is affected.
+
+   `SceneMaterial`'s default is a hard requirement rather than a taste,
+   and the test says so as an equality with a freshly defaulted material
+   rather than field by field -- a field added later cannot escape the
+   bit-for-bit promise by not being listed. `sanitized` replaces a
+   non-finite value with the DEFAULT and only then clamps, which is worth
+   stating because one test asserted the opposite first and the code was
+   right: an infinite `parallaxDepth` comes back 0.05, not 0.5.
+
+   Tested: `tests/SceneLayerTests.cpp` (31 tests).
+
+   `Scene/SceneComposition.h/.cpp` then ports the `SceneComposition` half
+   of `Data/Scene/SceneComposition.swift`, `Scene/SceneCamera.h` ports
+   `Data/Scene/SceneCamera.swift`, and `Scene/SceneLight.h` ports the
+   MODEL half of `Data/Scene/SceneLight.swift`.
+
+   Three things this deliberately did NOT write:
+   - The lighting math. It landed in Phase 4 as
+     `Render/SceneLighting.h`'s `LightFalloffCurve`, `lightDirection`,
+     `lightInnerRadius`, `lightBandWidth` and `SceneLightParams` -- which
+     is precisely "everything the lighting math reads off a light". So
+     `SceneLight::params()` fills one and `direction()`/`innerRadius()`/
+     `bandWidth()` ask the existing functions. A second transcription of
+     the band width would be a particularly bad one to have: it is what
+     the lattice density is chosen from, so two versions would not look
+     wrong, they would look slightly grainy.
+   - `SceneAmbient`. Already ported, in the same Render header, because
+     the lighting solve holds one directly. A model-side copy is how two
+     structs that mean the same thing start to differ by a field.
+   - A second pair of "model" enums. `SceneLightKind` and
+     `SceneLightBlend` already exist; what actually has to be explicit is
+     the mapping from a case to its STORED TOKEN, which is what
+     `sceneLightKindName`/`FromName` are. Never a cast -- a cast would
+     make the saved file depend on declaration order, the rule
+     `SceneGPUTypes.h` states for the wire codes.
+
+   `SceneCamera` closes `SceneProjection`'s first deferred convenience
+   initializer, as `sceneProjection(camera, viewSize)`. It lives in the
+   Scene header rather than on `SceneProjection` so the dependency points
+   one way: Scene knows about Render, Render never learns about Scene.
+   `SceneViewCamera::projection()` was already the other half.
+
+   `drawOrderedLayers` sorts `(sortingOrder, index)` pairs explicitly
+   rather than sorting layers by the number alone. Neither Swift's
+   `sorted(by:)` nor `std::sort` is stable, and the array's order is the
+   documented tie-break -- two cards on one layer swapping between runs
+   would have an artist watching their set restack itself for no reason.
+   The test uses twenty same-order cards, because a short run can pass on
+   an unstable sort by luck (most implementations insertion-sort small
+   ranges).
+
+   **A bug found by a test, in this port's own new code.**
+   `frontSortingOrder` used Swift's `-1` as the SEED of the running
+   maximum rather than as the fallback for an empty scene. Every layer
+   having a negative `sortingOrder` then gave 0 -- putting a new card
+   BEHIND the cards it was supposed to lead, and only in a scene where the
+   artist had numbered everything below zero. `max() ?? -1` means the max
+   of the array, with -1 standing in only when there is no array.
+
+   Two small additive changes in `Render/SceneLighting.h`, documented in
+   place: `LightFalloffStop`, `LightFalloffCurve` and `SceneAmbient` gained
+   equality, because the Phase 5 model types that hold them are
+   `Equatable` in Swift. The curve compares by its STOPS and not by its
+   table: the table is derived, so comparing it would restate the same
+   information 256 times and would call two curves different over a
+   rounding difference in the tabulation.
+
+   `Serialization/SavedScene.h/.cpp` then ports
+   `Data/Scene/ScenePersistence.swift` (463 L) and wires it into
+   `ProjectDocument`, closing one of the port's oldest open loops: the
+   `sceneCompositions` / `selectedSceneCompositionID` / `sceneViewCamera`
+   sections LEAVE `ProjectDocument::unrecognized` and become real fields.
+
+   That graduation is the point of the mechanism rather than an exception
+   to it. `unrecognized` is a holding pen -- it existed so a load/save
+   cycle through UMeshCore would not destroy a real project's Scene mode
+   before the model existed -- and a key leaving it is what progress looks
+   like. What must never happen is a key being BOTH modelled and
+   preserved, because it would then be written twice through two different
+   paths; `testSceneSectionsNoLongerFallIntoUnrecognized` and the package
+   test both assert it is not. `editorState` is the one section still in
+   the pen, and its end-to-end disk test still passes, now beside a new
+   one that takes a real Scene composition to disk and back.
+
+   Every compatibility concession is per FIELD and each one names the file
+   it protects:
+   - A missing `material` restores the FLAT surface. Not a neutral-looking
+     guess: `isFlat` gates a branch the shader never enters, so "renders
+     bit for bit as before" survives.
+   - A missing `sortingOrder` restores the layer's INDEX IN THE FILE.
+     Before layers had numbers the stacking WAS the array order, so the
+     index reproduces exactly the draw order the file was saved with. Zero
+     would put every card on one layer and leave the tie-break to sort
+     them -- the same order by luck, and no longer so the moment anybody
+     touched one number.
+   - A missing `lightMask` restores channel 1 and `receivesLight` true,
+     which is what makes a light added to an old scene later reach
+     anything.
+   - A `parallaxMode` this build does not know falls back to `off`, never
+     to the nearest mode: picking the nearest would render the artist a
+     scene they never composed and then let them save it back over the
+     original.
+   - A layer whose kind-specific payload is missing is DROPPED rather than
+     restored as something it never was, so a future layer type does not
+     brick an older editor -- it just does not appear.
+
+   Ranges are enforced on the way IN, not only in the inspector, so a
+   hand-edited or truncated file cannot produce a camera that divides by
+   `tan(0)`, a cone whose inner angle exceeds its outer (the smoothstep
+   between them would run backwards, which reads as a spot lit inside
+   out), or a falloff curve that ends above zero (which would draw a hard
+   circle around every lamp, reported as "the light has an edge" by
+   somebody who would never suspect the curve). One asymmetry worth
+   noticing while reading: an empty mask on a LIGHT restores to ALL
+   channels, while an empty mask on a LAYER restores to channel 1. They
+   are answering different questions -- a light that lights nothing and a
+   card no light can touch are both indistinguishable from a broken file,
+   and the safe answer differs.
+
+   An empty Scene writes NOTHING: no `sceneCompositions` key and no
+   `sceneViewCamera`, which keeps files byte-stable for every project that
+   never touches Scene mode. The view camera is tied to the COMPOSITIONS
+   rather than to its own emptiness, deliberately -- it records where the
+   artist was standing, and there is nowhere to stand in a project with no
+   set.
+
+   Two existing tests were updated rather than deleted, because both were
+   asserting the old holding-pen behaviour for these exact keys:
+   `ProjectDocumentTests`' unmodelled-key test now uses `editorState` plus
+   a synthetic future section, and `ProjectPackageTests`' disk round trip
+   does the same and gains the Scene-mode counterpart.
+
+   `BinaryExporter::writeScenesChunk` closes the other half of Scene
+   persistence, and with it the last deferred chunk of the UMSH binary
+   format -- SCENES was left out in Phase 3 because it serializes
+   `SceneComposition`/`SceneLayer`/`SceneCamera`, and the header said to
+   add it "the same way" once Phase 5 landed them. The compositions are
+   INJECTED into `exportScene` rather than read off `EditorScene`, which
+   stays the minimal editor aggregate -- the same split Swift has between
+   `SceneManager` and `AssetManager`, and the one `assets` already used.
+   The two-argument overload stays and writes no chunk, so Swift's own
+   `if !scene.sceneCompositions.isEmpty` gate is preserved exactly: a rig
+   that never used Scene mode still produces a file identical to one from
+   before the chunk existed, byte for byte, which a test asserts by
+   comparing the two blobs.
+
+   Three things about the chunk are worth knowing:
+   - Layers are written IN DRAW ORDER, back first, and the chunk carries
+     NO layer number. The array order is only a tie-break now, so writing
+     it raw would hand the runtime a stacking the editor never drew; and
+     what a player needs is the order, not the arithmetic that produced
+     it. The test's fixture creates its three cards in an order that is
+     deliberately not their stacking, so the assertion is real rather than
+     satisfied by accident.
+   - The camera tracks are written once PER COMPOSITION, and every
+     composition gets the same ones, because they come from the project's
+     single `sceneAnimationClip`. That is Swift's behaviour and the
+     format's shape, so it is reproduced rather than "fixed" -- but it
+     means the format cannot express per-composition camera animation
+     today. Asserted in a test so that changing either side is a
+     deliberate act.
+   - The shear and the material are NOT in the chunk. Also Swift's layout:
+     the runtime format predates both, and adding fields to a frozen chunk
+     without a version bump is how a reader starts parsing the next record
+     as part of this one.
+
+   Tested: `tests/SavedSceneTests.cpp` (26 tests) and five more in
+   `tests/BinaryExporterTests.cpp`.
+
+   `Scene/ScenePlayback.h/.cpp` ports `Data/Scene/ScenePlayback.swift`
+   (105 L) and `Scene/SceneSelection.h` ports `SceneSelection.swift`
+   (47 L).
+
+   Scene has a clock of its own, and the Swift header is careful about
+   why. The rig plays on `projectFramesPerSecond` between its playback
+   bounds; a scene has its own `durationInFrames` and `fps`, and a 24 fps
+   shot can stage a rig animated at 60. More importantly, driving the
+   scene from the rig's playhead would break what Scene is FOR: each
+   instance maps the scene frame to its own clip frame through speed,
+   offset and loop (`SceneLayer::rigFrame`), so three birds from one rig
+   flap out of step -- share the playhead and they all move together,
+   which is the feature gone.
+
+   NOTHING ACCUMULATES. A session is `(startTime, startFrame, fps,
+   bounds)` and the playhead is a pure function of the time. A transport
+   that advanced by a delta each tick would run SLOW on a machine that
+   misses its schedule, turning a dropped frame into lost time and
+   drifting away from the audio, the export and the wall clock. Derived
+   from the time, a frame the machine cannot deliver costs one SAMPLE of
+   the motion and never a step of it.
+
+   The clock is INJECTED rather than owned: Swift defaults `now` to
+   `CACurrentMediaTime()`, there is no portable equivalent, and the core
+   has no business having one. Same "inject what's needed" rule as the
+   rest of the port, with a second benefit Swift's version does not get --
+   the transport is exactly testable, because a test can hand it any
+   instant it likes.
+
+   **A property found while testing, documented rather than worked
+   around.** A sample taken at the EXACT instant a frame begins can come
+   back one frame early, because `now - startTime` is a difference of two
+   large doubles: `(1000.0 + 1.0/24.0) - 1000.0` is about 4e-14 short, so
+   `elapsed * 24` floors to 0 instead of 1. From a clock at zero it does
+   not happen; from a monotonic clock in the thousands of seconds it does.
+   It is inherent to the arithmetic and identical in Swift, and it is
+   harmless for exactly the reason the file is built around: the playhead
+   is derived, not accumulated, so the error is bounded at one sample and
+   the next tick is right again. A transport that stepped by a delta would
+   have turned the same ulp into permanent drift. The test asserts the
+   bounded behaviour instead of pretending the boundary is exact.
+
+   `SceneSelection` is modelled as a kind plus an id rather than as a
+   `std::variant`, unlike `SceneLayerContent`: both cases carry the same
+   payload type and nothing else, so a variant would need two wrapper
+   structs to stay distinguishable and would read as ceremony. The
+   invariant that matters -- ONE THING AT A TIME -- holds either way,
+   because there is one id field and not two. That invariant is the whole
+   point of the type: it replaced a `selectedLayerID` in a view and a
+   `selectedSceneLightID` on the manager, which nothing kept in step, so
+   selecting a light left the previous layer's gizmo on the canvas and
+   every caller that asked "what is selected" had to ask twice and decide
+   which answer won -- differently each time.
+
+   Tested: `tests/ScenePlaybackTests.cpp` (18 tests).
+
+   `Editor/Tools/PhysicsPreviewTool.h/.cpp` ports
+   `Core/Tools/PhysicsPreviewTool.swift` (59 L) and registers it in
+   `ToolManager`, and the finding is worth more than the code.
+
+   **The pose override has no consumer, in Swift either, and the port's
+   earlier diagnosis of why was wrong.** `ToolManager.h` recorded this tool
+   as blocked until `EditorScene` owned a live `PhysicsConstraintSystem`,
+   on the grounds that the override had nothing to feed. The conclusion
+   was right and the reason was not: a live system would read
+   `baseWorldMatrices()` exactly as Swift's does and still never see an
+   override, because nothing in the Swift source reads
+   `physicsPreviewOverrides`. Verified by grep rather than by reading:
+   three mentions in the whole codebase -- the declaration and the two
+   `SceneManager` methods that write it. The Swift file's own header
+   asserts that `baseWorldMatrices()` reads them; it does not.
+
+   So the feature is unfinished upstream rather than missing in
+   translation, and what it actually needs is the absent READ -- a
+   decision about how a dragged bone enters the solver's rest pose --
+   which is a design question for whoever finishes it. It is ported as it
+   is, with the same shape and the same (absent) effect, documented at
+   length in the header. It IS registered, unlike `.Mesh`, because the
+   tool is live in the Swift app (the "y" key and the constraints menu
+   both select it), so a shell switching to that mode must find a tool
+   rather than nothing.
+
+   This is the opposite call from `ArcGeometryBuilder` in Phase 4, and for
+   a reason worth stating: that one had ZERO call sites and was not ported;
+   this one is reachable from two places in the UI. "Unfinished" and "dead"
+   look alike in a diff and are not the same, and grep tells them apart.
+
+   The hit-test is real geometry and is ported exactly, with rules that are
+   deliberately this tool's own and not `BoneTool`'s: both ENDS of every
+   bone are candidates, the segment between them is not hittable at all,
+   nearest end wins, and the radius is a flat 14 points that is NOT scaled
+   for touch (Swift's `let jointR: Float = 14` is a plain constant, not one
+   of the `#if os(iOS)` pairs `BoneTool` uses).
+
+   Tested: `tests/PhysicsPreviewToolTests.cpp` (11 tests), including one
+   that pins the documented dead end -- dragging a bone under an override
+   leaves every world matrix identical. If a consumer is ever added, that
+   is the test that should fail and send the reader to the header. All 46
+   test binaries pass.
+
+   `Export/ExportSettings.h/.cpp` ports `Export/ExportSettings.swift`
+   (158 L) and the three string-backed enums it holds (`ExportKind`,
+   `PNGSizeMode`, `PNGExportType`), closing Phase 5.
+
+   It crosses because it is a SHARED FORMAT. The preset the Save button
+   writes exists "so a project's export setup travels with the team", so a
+   Mac build and a Windows build have to agree on it field for field and
+   token for token, or a preset saved on one opens wrong on the other.
+   That is precisely the kind of contract this library exists to hold, and
+   the file is pure data plus three derived values.
+
+   One documented divergence: EVERY FIELD IS OPTIONAL on the way in,
+   defaulting to a fresh `ExportSettings`' value, and an unrecognised enum
+   token keeps the default rather than failing. Swift's `Codable` is
+   stricter and would throw on a missing key -- but a preset travels
+   between machines and between versions of the app, so a build that added
+   a field must still open a preset written before it. Refusing the whole
+   preset over one absent key is the failure this avoids.
+
+   **`Export/ExportManager.swift` (135 L) is NOT ported**, and that is the
+   same call `CLAUDE.md` makes for the ~9000 lines of `Render/` shell. It
+   is orchestration, and nearly all of it is platform: a `PNGFrameSource`
+   backed by a Metal offscreen renderer, a `VideoExporter` on
+   AVFoundation's H.264 writer, `SceneFrameRenderer`/`SceneMetalRenderer`,
+   `URL`s, Swift `async`/`Task`. A Windows build must produce its own
+   against DirectX and Media Foundation, behind a common interface the
+   shell owns.
+
+   Two things in that file are logic rather than wiring, and neither
+   belongs in an export module:
+   - The guard in `exportSkeleton` that refuses to write a flat `.umesh`
+     over a project PACKAGE. Real and load-bearing -- the two share an
+     extension by design, so a save panel's "replace?" prompt looks
+     perfectly reasonable and saying yes destroys the project. This port
+     already has it, as `classifyProjectFile` in
+     `Serialization/ProjectPackage.h`, where the sniffing lives.
+   - The batch loop's per-clip subdirectory naming
+     (`parentDirectory/{clipName}/`): one line of path joining around a
+     platform exporter, which comes across with whichever shell grows a
+     batch export.
+
+   Tested: `tests/ExportSettingsTests.cpp` (16 tests) -- tokens rather
+   than ordinals, a full round trip through TEXT (a preset is a file, not
+   a value tree), a preset from an older build opening on defaults, an
+   unknown enum token keeping the default, a wrong-typed field not
+   poisoning the rest, `restoreDefaults` keeping the folder while resetting
+   the extension to the KIND's default, both size modes including their
+   floors, and sorted keys so a preset living in a repo does not diff on
+   every save. All 47 test binaries pass.
+
+   **Phase 5 is complete.**
+
+   Tested: `tests/SceneCompositionTests.cpp` (23 tests) -- draw order and
+   its tie-break, depth reordering nothing, front-to-back being exactly
+   the reverse (the two ends disagreeing is a bug this project has already
+   shipped once), the visibility threshold, the shot camera not picking up
+   the fly camera's numbers, a degenerate depth range still producing a
+   divisible projection, and the light model's derived values agreeing
+   with the Phase 4 math they are asked of. All 43 test binaries pass.
 6. **Platform shells** — Mac: progressively rewire existing SwiftUI views'
-   data sources to UMeshCore per landed phase, UI markup untouched. Windows:
+   data sources to UMeshCore per landed phase, UI markup untouched.
+   *Status: started.* Both halves need the same thing first -- for the
+   library to be CONSUMABLE FROM OUTSIDE THIS TREE -- and that is what
+   landed:
+
+   - `include/umeshcore/UMeshCore.h`, the umbrella: all 97 public headers
+     in one include. It exists for the SHELLS and not for code inside
+     UMeshCore, where a `.cpp` still includes exactly what it uses, so
+     that a change to one module does not rebuild the world and a missing
+     include is caught where it happens.
+   - `include/module.modulemap`, the Clang module that makes
+     `import UMeshCore` resolve. It sits BESIDE the header tree rather
+     than inside it, because Clang looks for a module map at the root of a
+     header search path -- installing it under `include/umeshcore/` would
+     put it where nothing looks. It names one umbrella header rather than
+     using `umbrella "umeshcore"` over the directory, so a scratch header
+     left on disk cannot silently join the public surface. And it carries
+     `requires cplusplus20` deliberately: without it, a Swift target that
+     forgets `-cxx-interoperability-mode=default` gets a wall of parse
+     errors from inside `<variant>` instead of a clear diagnostic.
+   - `install`/`export` rules and `UMeshCoreConfig.cmake`. Verified end to
+     end rather than assumed: `cmake --install` to a prefix, then a real
+     external project that does `find_package(UMeshCore)` and links
+     `UMeshCore::umeshcore` compiles and runs. The generated config has no
+     `find_dependency` block and should never grow one -- convention #1
+     is that there are no external dependencies, and this is where that
+     would first show up as a lie.
+   - `HeaderSelfContainmentTests`, which compiles EVERY public header as
+     its own translation unit, alone. All 97 pass today; the target exists
+     so the first one that stops passing fails this build rather than a
+     shell's, months later, on another platform's compiler. That property
+     is what lets `src/*.cpp` include only what it uses and what makes the
+     umbrella safe to reorder.
+
+   **The Swift interop audit** (`bindings/swift/README.md`) is the real
+   content of the increment, and its conclusion is a number rather than an
+   opinion. Most of the surface crosses into Swift untouched, and that is
+   not luck: zero external dependencies means no third-party type appears
+   in any signature, which is exactly what makes the surface importable.
+   What does not cross cleanly is small and bounded --
+
+   - `std::variant`, 3 sites (`KeyframeValue`, `GizmoHandle`,
+     `SceneLayerContent`). Swift imports them opaquely: no switch over the
+     cases. The fix is a discriminant plus per-case `optional<T>`
+     accessors ALONGSIDE the variant, not replacing it, because the C++
+     side's `std::visit` exhaustiveness is worth keeping and this port has
+     several. `SceneSelection` is the precedent for the other direction:
+     it is kind-plus-id precisely because its two cases share a payload.
+   - One `std::function` typedef (`ImageHitTestFn`) plus one parameter.
+     The fix is a C function pointer + `void*` overload -- and it is the
+     SAME decision as Phase 2's deferred alpha pipeline, since
+     `ImageHitTestFn` is that pipeline's injection point. They get decided
+     together or not at all.
+   - Three pure-virtual bases (`Tool`, `Constraint`, `CanvasActivity`).
+     Swift cannot inherit from a C++ class, but the shell does not need
+     to: it consumes tools that `ToolManager` builds and sends them
+     events, which is the direction that does cross.
+   - Fourteen reference-returning accessors. Swift imports them without a
+     lifetime guarantee, and this port has already taken two bites of
+     exactly that bug class in C++ (`BinaryExporter`'s `orderedBones()`,
+     `SavedSkeleton`'s `valueOr`) where the compiler at least helped.
+
+   **What NOT to do, recorded so nobody proposes it later**: a C ABI layer
+   over everything. That is thousands of lines of hand transcription --
+   precisely the bug source this port has spent five phases avoiding -- to
+   solve four constructs. The audit exists so that can be said with
+   numbers: 3 variants, 1 function typedef, 3 virtual bases, 14
+   by-reference accessors, against ~97 headers that cross whole.
+
+   The facades are deliberately NOT written yet. The right moment is when
+   a concrete Mac view asks for one: a speculative facade is a second API
+   to maintain, and the 6a migration is progressive by the user's explicit
+   decision. Neither shell can be compiled or verified in this Linux
+   environment, which is a further reason not to write code on spec here.
+
+   Windows:
    scaffold the full WinUI3 shell as soon as Phase 1 has any usable type
    (even a hardcoded test rig), so it's exercising real C++ code from day
    one instead of pure placeholder data; wire tool interaction after Phase

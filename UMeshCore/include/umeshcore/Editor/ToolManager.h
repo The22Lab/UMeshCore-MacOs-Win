@@ -17,15 +17,20 @@
 //     etc.) that don't exist yet -- every one of its sub-modes (Bind Mode,
 //     Weight Paint, hull creation, vertex edit) routes through at least one
 //     of those two gaps. Phase 4/5 scope; see ROADMAP.md.
-//   - `.PhysicsPreview`: `PhysicsPreviewTool`'s own mouse-handling logic is
-//     small and self-contained (hit-test a bone, store/clear a world-space
-//     override while dragging), but the override has no consumer today --
-//     `EditorScene` doesn't own a live `PhysicsConstraintSystem` instance,
-//     and nothing in `SceneAnimator`'s pose evaluation reads a "preview
-//     override" map. Porting the tool's mouse handlers without that
-//     integration would compile and run but visibly do nothing, which is
-//     worse than not having it; deferred until `EditorScene` (or whatever
-//     eventually plays a live-rig-instance role) owns a physics sim state.
+//   - `.PhysicsPreview`: NOW PORTED and registered below. The note that
+//     used to sit here deferred it until `EditorScene` owned a live
+//     `PhysicsConstraintSystem`, on the grounds that the override would
+//     otherwise have no consumer. The first half of that was right and the
+//     diagnosis was wrong: a live system would read `baseWorldMatrices()`
+//     exactly as Swift's does and STILL never see an override, because
+//     nothing in the Swift source reads `physicsPreviewOverrides` either
+//     (verified by grep -- three mentions, all of them the declaration and
+//     the two writers). The feature is unfinished upstream, not missing in
+//     translation, so the tool is ported with the same shape and the same
+//     absent effect, documented at length in `PhysicsPreviewTool.h`. It is
+//     registered because the tool is LIVE in the Swift app -- the "y" key
+//     and the constraints menu both select it -- so a shell that switches
+//     to it must find a tool here rather than nothing.
 //
 // Also NOT ported, and why: the IK-builder-picking intercept
 // (`scene.ikBuilder?.pickingSlot`) and the Bind-Mode intercept

@@ -1,27 +1,33 @@
-// Tests for the Scene model: Model/Scene/{SceneLayer, SceneComposition,
-// SceneCamera, SceneLight, SceneMaterial, SceneRenderAdapters}.h, ported
-// from `Data/Scene/*.swift`.
+// Tests for Scene/SceneComposition.h, Scene/SceneCamera.h and
+// Scene/SceneLight.h, ported from `Data/Scene/SceneComposition.swift`,
+// `SceneCamera.swift` and `SceneLight.swift`.
 //
-// The model's headers name the bugs each piece exists to prevent, so these
-// assert those properties rather than re-deriving the arithmetic:
+// The properties each file names a bug for:
 //
-//   - `orientation()` is a ROTATION even for a sheared card. The Swift
-//     header records the gizmo bug that made it exist -- a frame taken by
-//     differencing `planePoint` is not orthonormal once shear is on -- and
-//     the test reproduces that wrong frame rather than describing it.
-//   - Shear is expressed in SCALED units, which is the order being the
-//     definition.
-//   - The draw order is stable: two cards on one layer never swap.
-//   - A layer is FLAT, which is the invariant the whole of Phase 4's
-//     lighting rests on, so its corners lie exactly in its lighting plane.
-//   - The camera's focal length is the distance at which one world unit
-//     covers one pixel -- checked against `SceneProjection` itself, not
-//     against the formula that produced it.
+//   - Draw order is `sortingOrder` ascending with the ARRAY's order
+//     breaking ties. The tie-break is the whole reason the sort is written
+//     out: neither Swift's `sorted(by:)` nor `std::sort` is stable, so two
+//     cards on one layer could swap between runs and an artist would watch
+//     their set restack itself for no reason.
+//   - The hierarchy lists FRONT-MOST FIRST while drawing goes back first.
+//     The two disagreeing about which end is the front is a bug this
+//     project has already shipped once.
+//   - Depth reorders nothing: changing `positionZ` must not move a card in
+//     the draw order, however far it goes.
+//   - `SceneCamera` and `SceneViewCamera` are different cameras. The shot
+//     projection comes from the scene camera and must not pick up the fly
+//     camera's numbers.
+//   - A light's derived quantities come from the Phase 4 math, not from a
+//     second transcription -- so the model's answers and the math's are
+//     the same answers, checked here rather than assumed.
 
-#include "umeshcore/Model/Scene/SceneComposition.h"
-#include "umeshcore/Model/Scene/SceneRenderAdapters.h"
+#include "umeshcore/Scene/SceneComposition.h"
 
 #include <cmath>
+#include <string>
+
+#include "umeshcore/Math/MatrixUtilities.h"
+#include "umeshcore/Render/SceneViewCamera.h"
 
 #include "TestHarness.h"
 
@@ -29,410 +35,359 @@ using namespace umeshcore;
 
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
-
-SceneLayer plate(int sortingOrder, const char* name) {
+SceneLayer card(std::uint64_t id, int sortingOrder, const std::string& name) {
     SceneLayer layer;
-    layer.id = Uuid(1, static_cast<std::uint64_t>(sortingOrder) + 100);
+    layer.id = Uuid(id, id);
     layer.name = name;
     layer.sortingOrder = sortingOrder;
     layer.content = ScenePlateContent{Uuid(9, 9)};
     return layer;
 }
 
+std::vector<std::string> names(const std::vector<SceneLayer>& layers) {
+    std::vector<std::string> out;
+    for (const SceneLayer& layer : layers) out.push_back(layer.name);
+    return out;
+}
+
 } // namespace
 
-static void testShearIsExpressedInScaledUnits() {
-    // THE ORDER IS THE DEFINITION: scale, then shear, then roll. A scaled
-    // card slants by the amount the number says rather than by that amount
-    // times its scale.
-    SceneLayer layer;
-    layer.scale = Vec2(2, 3);
-    layer.shear = Vec2(0.5f, 0);
-    const Vec2 point = layer.planePoint(Vec2(0, 1));
-    // scale -> (0, 3); shear x slides by the height: (1.5, 3).
-    UM_CHECK_NEAR(point.x, 1.5, 1e-5);
-    UM_CHECK_NEAR(point.y, 3.0, 1e-5);
-    // Shearing BEFORE the scale would have given 1.0 -- the same slant
-    // multiplied by the card's own width.
-    UM_CHECK(std::fabs(point.x - 1.0f) > 0.4f);
+// ---- Draw order ----
 
-    // Roll comes last, so it turns the already-sheared point.
-    layer.shear = Vec2::zero();
-    layer.scale = Vec2(1, 1);
-    layer.rotation = kPi * 0.5f;
-    const Vec2 turned = layer.planePoint(Vec2(1, 0));
-    UM_CHECK_NEAR(turned.x, 0.0, 1e-5);
-    UM_CHECK_NEAR(turned.y, 1.0, 1e-5);
-}
-
-static void testOrientationStaysARotationWhereDifferencingTheCardDoesNot() {
-    // The whole of the gizmo bug, reproduced. A sheared card's plane axes
-    // are not perpendicular; normalising the two vectors that come back
-    // fixes their lengths and can do nothing about the angle between them.
-    SceneLayer layer;
-    layer.scale = Vec2(2.0f, 0.5f);
-    layer.shear = Vec2(0.8f, 0.0f);
-    layer.rotation = 0.4f;
-    layer.rotation3D = Vec3(0.3f, -0.6f, 0);
-
-    const SceneLayer::Orientation axes = layer.orientation();
-    UM_CHECK_NEAR(length(axes.x), 1.0, 1e-5);
-    UM_CHECK_NEAR(length(axes.y), 1.0, 1e-5);
-    UM_CHECK_NEAR(length(axes.z), 1.0, 1e-5);
-    UM_CHECK_NEAR(dot(axes.x, axes.y), 0.0, 1e-5);
-    UM_CHECK_NEAR(dot(axes.x, axes.z), 0.0, 1e-5);
-    UM_CHECK_NEAR(dot(axes.y, axes.z), 0.0, 1e-5);
-
-    // The frame the gizmo used to build: difference the card's own
-    // transform and normalise. Same card, and NOT a rotation.
-    const Vec3 origin = layer.liftToWorld(layer.planePoint(Vec2(0, 0)));
-    const Vec3 naiveX = normalize(layer.liftToWorld(layer.planePoint(Vec2(1, 0))) - origin);
-    const Vec3 naiveY = normalize(layer.liftToWorld(layer.planePoint(Vec2(0, 1))) - origin);
-    UM_CHECK(std::fabs(dot(naiveX, naiveY)) > 0.1f); // visibly not square
-}
-
-static void testTheLiftPreservesLengthsAndAngles() {
-    // Linear and orthonormal: it takes a plane to a plane, which is why
-    // the card's corners and the gizmo's frame can share it.
-    SceneLayer layer;
-    layer.rotation3D = Vec3(0.7f, 1.1f, 0);
-    const Vec2 a(3, 0), b(0, 5);
-    UM_CHECK_NEAR(length(layer.liftToWorld(a)), 3.0, 1e-4);
-    UM_CHECK_NEAR(length(layer.liftToWorld(b)), 5.0, 1e-4);
-    UM_CHECK_NEAR(dot(layer.liftToWorld(a), layer.liftToWorld(b)), 0.0, 1e-3);
-    // Linear: the lift of a sum is the sum of the lifts.
-    const Vec3 sum = layer.liftToWorld(a + b);
-    const Vec3 parts = layer.liftToWorld(a) + layer.liftToWorld(b);
-    UM_CHECK_NEAR(length(sum - parts), 0.0, 1e-4);
-}
-
-static void testACardIsFlatSoItsCornersLieInItsLightingPlane() {
-    // The founding invariant, and the one Phase 4's lighting rests on: the
-    // ray through any pixel meets this plane at the world point that is
-    // actually there.
-    SceneLayer layer;
-    layer.position = Vec2(120, -40);
-    layer.positionZ = 300;
-    layer.rotation = 0.5f;
-    layer.rotation3D = Vec3(0.4f, 0.9f, 0);
-    layer.scale = Vec2(1.7f, 0.6f);
-    layer.shear = Vec2(0.3f, -0.2f);
-
-    const SceneLayer::Plane plane = layer.lightingPlane();
-    UM_CHECK_NEAR(length(plane.normal), 1.0, 1e-4);
-    for (const Vec3& corner : cardCorners(layer, Vec2(-200, -120), Vec2(200, 120))) {
-        UM_CHECK_NEAR(dot(corner - plane.point, plane.normal), 0.0, 1e-2);
-    }
-    // And the corners come back in a fixed order: top-left, top-right,
-    // bottom-right, bottom-left, as seen from the front.
-    SceneLayer plain;
-    const auto corners = cardCorners(plain, Vec2(-10, -5), Vec2(10, 5));
-    UM_CHECK(corners[0].x < corners[1].x); // left, then right
-    UM_CHECK(corners[0].y > corners[3].y); // top, then bottom
-}
-
-static void testTheTangentCarriesTheMirroringAndNotTheScale() {
-    SceneLayer layer;
-    layer.scale = Vec2(3, 1);
-    const SceneLayer::TangentFrame upright = layer.lightingTangent();
-    UM_CHECK_NEAR(length(upright.tangent), 1.0, 1e-5); // magnitude left out
-    UM_CHECK(upright.handed == 1.0f);
-
-    // A negative scale mirrors the card, so image +x points the other way
-    // and the handedness flips -- a basis not told it is mirrored lights
-    // the relief from the wrong side.
-    layer.scale = Vec2(-3, 1);
-    const SceneLayer::TangentFrame mirrored = layer.lightingTangent();
-    UM_CHECK(mirrored.handed == -1.0f);
-    UM_CHECK_NEAR(length(mirrored.tangent + upright.tangent), 0.0, 1e-5);
-
-    // Both axes negative is a 180-degree turn, not a mirror.
-    layer.scale = Vec2(-3, -1);
-    UM_CHECK(layer.lightingTangent().handed == 1.0f);
-
-    // A degenerate axis keeps the UNMIRRORED reading: sign(0) is zero, and
-    // a frame multiplied by zero is not a frame.
-    layer.scale = Vec2(0, 0);
-    UM_CHECK(layer.lightingTangent().handed == 1.0f);
-    UM_CHECK_NEAR(length(layer.lightingTangent().tangent), 1.0, 1e-5);
-}
-
-static void testRigFrameFreezesClampsAndWrapsWithoutGoingNegative() {
-    SceneLayer layer;
-    layer.content = SceneRigContent{Uuid(2, 2), 1.0f, 10, true};
-    UM_CHECK(layer.rigFrame(5, 60).value() == 15);
-    // A speed of zero freezes on the start frame rather than dividing the
-    // timeline by nothing.
-    std::get<SceneRigContent>(layer.content).speed = 0.0f;
-    UM_CHECK(layer.rigFrame(999, 60).value() == 10);
-
-    // Looping wraps, and a negative index must not come back: C++'s % (like
-    // Swift's) keeps the sign of the dividend.
-    std::get<SceneRigContent>(layer.content).speed = -1.0f;
-    std::get<SceneRigContent>(layer.content).startFrame = 0;
-    for (int frame = 0; frame < 200; ++frame) {
-        const int wrapped = layer.rigFrame(frame, 60).value();
-        UM_CHECK(wrapped >= 0 && wrapped < 60);
-    }
-    UM_CHECK(layer.rigFrame(1, 60).value() == 59);
-
-    // Not looping clamps to the clip instead.
-    std::get<SceneRigContent>(layer.content).loops = false;
-    UM_CHECK(layer.rigFrame(1, 60).value() == 0);
-    std::get<SceneRigContent>(layer.content).speed = 5.0f;
-    UM_CHECK(layer.rigFrame(100, 60).value() == 59);
-
-    // A clip with no frames freezes rather than dividing by zero.
-    UM_CHECK(layer.rigFrame(7, 0).value() == 0);
-
-    // Anything that is not a rig has no frame at all.
-    SceneLayer plate;
-    plate.content = ScenePlateContent{Uuid(3, 3)};
-    UM_CHECK(!plate.rigFrame(5, 60).has_value());
-    SceneLayer fill;
-    UM_CHECK(!fill.rigFrame(5, 60).has_value());
-    UM_CHECK(contentIsFill(fill.content));
-}
-
-static void testDrawOrderIsStableAndDepthDoesNotReorderAnything() {
+static void testDrawOrderIsBackFirstBySortingOrder() {
     SceneComposition scene;
-    SceneLayer back = plate(0, "back");
-    SceneLayer middleA = plate(10, "middleA");
-    SceneLayer middleB = plate(10, "middleB");
-    SceneLayer front = plate(30, "front");
-    // The one in front in Z, but on the BACK layer: depth must not
-    // reorder anything.
-    back.positionZ = -5000;
-    front.positionZ = 5000;
-    scene.layers = {front, middleA, back, middleB};
-
-    const auto order = scene.drawOrderedLayers();
-    UM_CHECK(order.size() == 4);
-    UM_CHECK(order[0].name == "back");
-    // Ties broken by the array's own order, which is the artist's creation
-    // order -- run after run, not by chance.
-    UM_CHECK(order[1].name == "middleA");
-    UM_CHECK(order[2].name == "middleB");
-    UM_CHECK(order[3].name == "front");
-
-    const auto reversed = scene.frontToBackLayers();
-    UM_CHECK(reversed[0].name == "front" && reversed[3].name == "back");
-
-    // Stable across repeated calls, and a swap in the array moves the tie
-    // the other way -- which is the artist's decision, not the sort's.
-    UM_CHECK(scene.drawOrderedLayers()[1].name == "middleA");
-    scene.layers = {front, middleB, back, middleA};
-    UM_CHECK(scene.drawOrderedLayers()[1].name == "middleB");
+    scene.layers = {card(1, 30, "foreground"), card(2, 0, "backdrop"), card(3, 10, "midground")};
+    UM_CHECK(names(scene.drawOrderedLayers()) ==
+             std::vector<std::string>({"backdrop", "midground", "foreground"}));
 }
 
-static void testVisibleLayersAndFrontSortingOrder() {
+static void testTiesBreakOnTheArrayOrderAndStayThere() {
+    // Every card on one layer: the answer must be the creation order,
+    // exactly, and must not depend on which sort the library uses.
     SceneComposition scene;
-    SceneLayer hidden = plate(5, "hidden");
+    scene.layers = {card(1, 5, "a"), card(2, 5, "b"), card(3, 5, "c"), card(4, 5, "d"),
+                    card(5, 5, "e"), card(6, 5, "f"), card(7, 5, "g"), card(8, 5, "h"),
+                    card(9, 5, "i"), card(10, 5, "j"), card(11, 5, "k"), card(12, 5, "l"),
+                    card(13, 5, "m"), card(14, 5, "n"), card(15, 5, "o"), card(16, 5, "p"),
+                    card(17, 5, "q"), card(18, 5, "r"), card(19, 5, "s"), card(20, 5, "t")};
+    // Twenty entries on purpose: a short run can pass on an unstable sort
+    // by luck, because most implementations insertion-sort small ranges.
+    const std::vector<std::string> expected = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
+                                               "k", "l", "m", "n", "o", "p", "q", "r", "s", "t"};
+    UM_CHECK(names(scene.drawOrderedLayers()) == expected);
+    // And again, to catch an implementation that is merely arbitrary
+    // rather than unstable.
+    UM_CHECK(names(scene.drawOrderedLayers()) == expected);
+}
+
+static void testTiesBreakWithinEachLayerNotAcrossThem() {
+    SceneComposition scene;
+    scene.layers = {card(1, 10, "ten-first"), card(2, 0, "zero-first"), card(3, 10, "ten-second"),
+                    card(4, 0, "zero-second")};
+    UM_CHECK(names(scene.drawOrderedLayers()) ==
+             std::vector<std::string>({"zero-first", "zero-second", "ten-first", "ten-second"}));
+}
+
+static void testDepthDoesNotReorderAnything() {
+    // The founding rule. Pushing a card back in Z changes how big it draws
+    // and how fast it slides, and nothing about who covers whom.
+    SceneComposition scene;
+    scene.layers = {card(1, 0, "near-in-z"), card(2, 1, "far-in-z")};
+    const std::vector<std::string> before = names(scene.drawOrderedLayers());
+    scene.layers[0].positionZ = 50000.0f;
+    scene.layers[1].positionZ = -50000.0f;
+    UM_CHECK(names(scene.drawOrderedLayers()) == before);
+}
+
+static void testNegativeSortingOrdersSortBehindZero() {
+    SceneComposition scene;
+    scene.layers = {card(1, 0, "zero"), card(2, -5, "behind")};
+    UM_CHECK(names(scene.drawOrderedLayers()) == std::vector<std::string>({"behind", "zero"}));
+}
+
+static void testFrontToBackIsExactlyTheReverse() {
+    // The hierarchy's convention: top row is front-most. The two ends
+    // disagreeing is a bug this project already shipped once.
+    SceneComposition scene;
+    scene.layers = {card(1, 0, "backdrop"), card(2, 20, "foreground"), card(3, 10, "midground")};
+    UM_CHECK(names(scene.frontToBackLayers()) ==
+             std::vector<std::string>({"foreground", "midground", "backdrop"}));
+}
+
+static void testEmptySceneHasEmptyOrders() {
+    const SceneComposition scene;
+    UM_CHECK(scene.drawOrderedLayers().empty());
+    UM_CHECK(scene.frontToBackLayers().empty());
+    UM_CHECK(scene.visibleLayers().empty());
+}
+
+// ---- Visibility ----
+
+static void testVisibleDropsHiddenAndFullyTransparentLayers() {
+    SceneComposition scene;
+    SceneLayer hidden = card(1, 0, "hidden");
     hidden.isHidden = true;
-    SceneLayer ghost = plate(6, "ghost");
-    ghost.opacity = 0.0005f; // below the threshold: nothing to draw
-    SceneLayer shown = plate(7, "shown");
-    scene.layers = {hidden, ghost, shown};
-
-    const auto visible = scene.visibleLayers();
-    UM_CHECK(visible.size() == 1 && visible[0].name == "shown");
-
-    // A new layer lands in front of everything.
-    UM_CHECK(scene.frontSortingOrder() == 8);
-    UM_CHECK(SceneComposition{}.frontSortingOrder() == 0);
-
-    // Lookup by id, and a miss is a miss rather than a default.
-    UM_CHECK(scene.layer(shown.id) != nullptr);
-    UM_CHECK(scene.layer(Uuid(7, 7)) == nullptr);
+    SceneLayer transparent = card(2, 1, "transparent");
+    transparent.opacity = 0.0f;
+    SceneLayer barelyThere = card(3, 2, "barely-there");
+    barelyThere.opacity = 0.0005f;
+    SceneLayer faint = card(4, 3, "faint");
+    faint.opacity = 0.01f;
+    scene.layers = {hidden, transparent, barelyThere, faint, card(5, 4, "solid")};
+    // 0.001 is the threshold, and it is exclusive: a layer AT it
+    // contributes nothing a viewer could see, and skipping it early saves
+    // a whole lighting pass over the card.
+    UM_CHECK(names(scene.visibleLayers()) == std::vector<std::string>({"faint", "solid"}));
 }
 
-static void testTheCameraFocalLengthIsOnePixelPerUnit() {
-    // Checked against `SceneProjection` itself rather than against the
-    // formula that produced it: at the focal distance a one-unit segment
-    // must cover exactly one pixel of view height, which is what makes a
-    // Scene with its layers on the focal plane land on the pixels the 2D
-    // path already produced.
-    SceneCamera camera;
-    camera.positionZ = -1000;
-    const Vec2 renderSize(1920, 1080);
-    const float focal = camera.focalLength(renderSize.y);
-    const SceneProjection projection = sceneProjection(camera, renderSize);
-
-    const float planeZ = camera.positionZ + focal;
-    const auto centre = projection.project(Vec3(0, 0, planeZ));
-    const auto oneUnitUp = projection.project(Vec3(0, 1, planeZ));
-    UM_CHECK(centre.has_value() && oneUnitUp.has_value());
-    UM_CHECK_NEAR(centre->y - oneUnitUp->y, 1.0, 1e-3);
-    UM_CHECK_NEAR(centre->x, 960.0, 1e-3);
-    UM_CHECK_NEAR(centre->y, 540.0, 1e-3);
-
-    // And the shot's frame at that distance is exactly the render size.
-    const auto frame = shotFrame(camera, renderSize, focal);
-    UM_CHECK_NEAR(length(frame[1] - frame[0]), 1920.0, 1e-2);
-    UM_CHECK_NEAR(length(frame[2] - frame[1]), 1080.0, 1e-2);
+static void testVisibleKeepsDrawOrder() {
+    SceneComposition scene;
+    scene.layers = {card(1, 30, "front"), card(2, 0, "back")};
+    UM_CHECK(names(scene.visibleLayers()) == std::vector<std::string>({"back", "front"}));
 }
 
-static void testTheFlyPreviewOfTheShotKeepsTheShotsFraming() {
-    // `shotAsViewProjection` differs from `sceneProjection` only in its
-    // clip planes -- it is the set seen from the side, where the shot's
-    // own near plane would clip the preview for reasons that belong to the
-    // render. Everything the artist judges framing by must agree.
-    SceneCamera camera;
-    camera.rotation3D = Vec3(0.2f, -0.35f, 0.1f);
-    camera.nearZ = 500.0f; // deliberately aggressive
-    const Vec2 renderSize(1280, 720);
-    const SceneProjection shot = sceneProjection(camera, renderSize);
-    const SceneProjection preview = shotAsViewProjection(camera, renderSize);
+// ---- Lookup and the new-layer number ----
 
-    UM_CHECK(shot.focalLength == preview.focalLength);
-    UM_CHECK(preview.nearZ < shot.nearZ);
-    const Vec3 point(120, -80, 900);
-    const auto a = shot.project(point);
-    const auto b = preview.project(point);
-    UM_CHECK(a.has_value() && b.has_value());
-    UM_CHECK_NEAR(a->x, b->x, 1e-2);
-    UM_CHECK_NEAR(a->y, b->y, 1e-2);
-}
-
-static void testAMaterialThatAsksForNothingIsFlatAndSanitisingKeepsItSo() {
-    const SceneMaterial flat;
-    UM_CHECK(flat.isFlat());
-    UM_CHECK(flat == SceneMaterial::flat());
-    UM_CHECK(flat.sanitized() == flat); // the promise survives the clamp
-    UM_CHECK(flat.parallaxMode == SceneParallaxMode::kOff);
-    UM_CHECK(!parallaxClips(SceneParallaxMode::kOff));
-    UM_CHECK(!parallaxClips(SceneParallaxMode::kOcclusion));
-    UM_CHECK(parallaxClips(SceneParallaxMode::kSilhouetteClip));
-    UM_CHECK(parallaxClips(SceneParallaxMode::kSilhouetteShell));
-    // Only the shell grows the quad, which is the difference that lets a
-    // layer paint outside the rectangle its own gizmo shows.
-    UM_CHECK(!parallaxExpandsCard(SceneParallaxMode::kSilhouetteClip));
-    UM_CHECK(parallaxExpandsCard(SceneParallaxMode::kSilhouetteShell));
-
-    SceneMaterial mapped;
-    mapped.normalStrength = 0.5f;
-    UM_CHECK(!mapped.isFlat());
-}
-
-static void testSanitisingRefusesTheValuesThatLookLikeOtherBugs() {
-    SceneMaterial broken;
-    // A negative smoothness takes the slow path and computes a wrap with a
-    // NEGATIVE width, which pushes the terminator the wrong way and looks
-    // like an inverted light.
-    broken.smoothness = -0.4f;
-    // A negative depth walks the ray BACKWARDS out of the surface, which
-    // does not look like a bad number -- it looks like the artwork sliding
-    // off its own card.
-    broken.parallaxDepth = -0.2f;
-    // NaN makes the step count NaN, so the loop runs zero times and the
-    // feature silently disables itself on one layer and nowhere else.
-    broken.parallaxQuality = std::nanf("");
-    broken.contrast = 99.0f;
-    broken.normalStrength = std::nanf("");
-    broken.parallaxOcclusionStrength = 5.0f;
-
-    const SceneMaterial clean = broken.sanitized();
-    UM_CHECK(clean.smoothness == 0.0f);
-    UM_CHECK(clean.parallaxDepth == 0.0f);
-    UM_CHECK(clean.parallaxQuality == 0.5f);   // the default, not zero
-    UM_CHECK(clean.normalStrength == 1.0f);    // the default, not zero
-    UM_CHECK(clean.contrast == 4.0f);          // clamped, not defaulted
-    UM_CHECK(clean.parallaxOcclusionStrength == 1.0f);
-    // Above 1 stays allowed where the header says it is useful.
-    SceneMaterial strong;
-    strong.normalStrength = 3.0f;
-    UM_CHECK(strong.sanitized().normalStrength == 3.0f);
-}
-
-static void testTheLightModelFillsTheMathsParamsWithoutRederivingAnything() {
+static void testLookupByIdFindsAndMisses() {
+    SceneComposition scene;
+    scene.layers = {card(1, 0, "a"), card(2, 0, "b")};
     SceneLight light;
-    light.position = Vec2(120, -45);
-    light.positionZ = -800;
-    light.kind = SceneLightKind::kSpot;
-    light.blend = SceneLightBlend::kScreen;
-    light.radius = 900;
-    light.softness = 0.25f;
-    light.azimuth = 0.9f;
+    light.id = Uuid(77, 77);
+    light.name = "key";
+    scene.lights = {light};
+
+    const SceneLayer* found = scene.layer(Uuid(2, 2));
+    UM_CHECK(found != nullptr);
+    if (found) UM_CHECK(found->name == "b");
+    UM_CHECK(scene.layer(Uuid(404, 404)) == nullptr);
+
+    const SceneLight* foundLight = scene.light(Uuid(77, 77));
+    UM_CHECK(foundLight != nullptr);
+    if (foundLight) UM_CHECK(foundLight->name == "key");
+    UM_CHECK(scene.light(Uuid(404, 404)) == nullptr);
+}
+
+static void testFrontSortingOrderStartsAtZeroAndThenLeads() {
+    SceneComposition scene;
+    // An empty scene's first card lands on 0, not on 1 -- Swift's
+    // `max() ?? -1` then `+ 1`.
+    UM_CHECK(scene.frontSortingOrder() == 0);
+    scene.layers = {card(1, 7, "a"), card(2, 3, "b")};
+    UM_CHECK(scene.frontSortingOrder() == 8);
+    // Negative orders do not make it go backwards.
+    scene.layers = {card(1, -4, "a"), card(2, -9, "b")};
+    UM_CHECK(scene.frontSortingOrder() == -3);
+}
+
+// ---- Defaults ----
+
+static void testDefaultsAreTheOnesASceneOpensWith() {
+    const SceneComposition scene;
+    UM_CHECK(scene.name == "Scene");
+    UM_CHECK(scene.durationInFrames == 90);
+    UM_CHECK(scene.fps == 30);
+    UM_CHECK_NEAR(scene.renderSize.x, 1920.0, 1e-6);
+    UM_CHECK_NEAR(scene.renderSize.y, 1080.0, 1e-6);
+    // Full white at strength 1 multiplies by exactly one, so a scene
+    // composed before lighting existed renders identically.
+    UM_CHECK(scene.ambient == SceneAmbient::neutral());
+    UM_CHECK_NEAR(scene.ambient.rgb().x, 1.0, 1e-6);
+    // A grey ramp behind everything, so a scene is never composited onto
+    // nothing.
+    UM_CHECK(scene.background == SceneFill::neutral());
+}
+
+// ---- SceneCamera ----
+
+static void testFocalLengthPutsScaleAtOneOnTheFocalPlane() {
+    // One world unit covers one pixel of view height at exactly this
+    // distance, which is what makes a Scene whose layers sit on the focal
+    // plane land on the pixels the editor's 2D path already produces.
+    SceneCamera camera;
+    camera.fieldOfView = 45.0f;
+    const float focal = camera.focalLength(1080.0f);
+    const float expected = 540.0f / std::tan(45.0f * kPi / 180.0f * 0.5f);
+    UM_CHECK_NEAR(focal, expected, 1e-2);
+
+    const SceneProjection projection = sceneProjection(camera, Vec2(1920, 1080));
+    // `pixels = focalLength * length / depth`, so at depth == focalLength
+    // a length of 1 covers 1 pixel.
+    UM_CHECK_NEAR(projection.focalLength, focal, 1e-2);
+}
+
+static void testShotProjectionComesFromTheSceneCameraNotTheFlyCamera() {
+    // Two cameras, one set of maths, and they must not be confused: the
+    // shot renders from the scene camera wherever the artist happens to be
+    // standing.
+    SceneCamera shot;
+    shot.position = Vec2(0, 0);
+    shot.positionZ = -1200.0f;
+    const SceneProjection fromShot = sceneProjection(shot, Vec2(1920, 1080));
+
+    SceneViewCamera fly;
+    fly.pivot = Vec3(5000, 5000, 5000);
+    fly.distance = 4000.0f;
+    const SceneProjection fromFly = fly.projection(Vec2(1920, 1080));
+
+    UM_CHECK_NEAR(fromShot.eye.z, -1200.0, 1e-3);
+    UM_CHECK(std::fabs(fromFly.eye.x - fromShot.eye.x) > 1.0f);
+}
+
+static void testDegenerateDepthRangeStillProducesADivisibleProjection() {
+    // The Swift guards, kept verbatim: nearZ floored at 0.01 and farZ held
+    // at least a unit beyond it, so a camera saved with a collapsed range
+    // does not give a projection matrix that divides by zero.
+    SceneCamera camera;
+    camera.nearZ = 0.0f;
+    camera.farZ = 0.0f;
+    const SceneProjection projection = sceneProjection(camera, Vec2(800, 600));
+    UM_CHECK(projection.nearZ >= 0.01f);
+    const auto point = projection.project(Vec3(0, 0, camera.positionZ + 500.0f));
+    UM_CHECK(point.has_value());
+    if (point) UM_CHECK(std::isfinite(point->x) && std::isfinite(point->y));
+}
+
+static void testCameraLooksAlongIncreasingZ() {
+    // A layer is in front of the camera when its Z is GREATER -- the same
+    // direction After Effects uses, and the same one the layer and the
+    // light use, so the three never need a sign flip between them.
+    const SceneCamera camera;
+    const SceneProjection projection = sceneProjection(camera, Vec2(1920, 1080));
+    UM_CHECK(projection.depth(Vec3(0, 0, camera.positionZ + 100.0f)) > 0.0f);
+    UM_CHECK(projection.depth(Vec3(0, 0, camera.positionZ - 100.0f)) < 0.0f);
+}
+
+// ---- SceneLight ----
+
+static void testLightDerivedValuesComeFromThePhase4Math() {
+    // The model must not carry a second transcription of the direction or
+    // the band width. If it did, these would drift -- and the band width
+    // is what the lattice density is chosen from, so the symptom would not
+    // be "wrong", it would be "slightly grainy".
+    SceneLight light;
+    light.azimuth = 0.7f;
     light.elevation = -0.3f;
-    light.mask = SceneLightMask::channel(2);
+    light.radius = 500.0f;
+    light.softness = 0.4f;
 
     const SceneLightParams params = light.params();
-    UM_CHECK(params.world == Vec3(120, -45, -800));
-    UM_CHECK(params.mask == light.mask.rawValue);
-    UM_CHECK(params.kind == SceneLightKind::kSpot);
-
-    // And the math reads it the way Phase 4 already agreed: the band comes
-    // from radius and softness, the direction from the two angles.
-    const PreparedLight prepared{params};
-    UM_CHECK_NEAR(prepared.band, 900.0 * 0.25, 1e-3);
-    UM_CHECK_NEAR(prepared.innerRadius, 900.0 * 0.75, 1e-3);
-    UM_CHECK_NEAR(length(prepared.direction), 1.0, 1e-5);
-    UM_CHECK_NEAR(prepared.origin.z, -800.0, 1e-4);
-
-    // A disabled light is dropped when the lighting is built, not
-    // filtered at every call site.
-    SceneLight off = light;
-    off.isEnabled = false;
-    const SceneLighting lighting({light.params(), off.params()}, SceneAmbient::neutral());
-    UM_CHECK(lighting.lights.size() == 1);
-    // Masking is the performance control as much as the artistic one.
-    UM_CHECK(lighting.lightsReaching(SceneLightMask::channel(2).rawValue).size() == 1);
-    UM_CHECK(lighting.lightsReaching(SceneLightMask::channel(3).rawValue).empty());
+    const Vec3 fromMath = lightDirection(params.azimuth, params.elevation);
+    UM_CHECK_NEAR(light.direction().x, fromMath.x, 1e-6);
+    UM_CHECK_NEAR(light.direction().y, fromMath.y, 1e-6);
+    UM_CHECK_NEAR(light.direction().z, fromMath.z, 1e-6);
+    UM_CHECK_NEAR(light.innerRadius(), lightInnerRadius(params), 1e-6);
+    UM_CHECK_NEAR(light.bandWidth(), lightBandWidth(params), 1e-6);
+    // And the direction really is a unit vector, which is what the
+    // attenuation assumes.
+    UM_CHECK_NEAR(length(light.direction()), 1.0, 1e-5);
 }
 
-static void testTheMaskIsEightChannelsAndReadsBackInOrder() {
-    SceneLightMask mask;
-    UM_CHECK(mask.isEmpty());
-    mask = SceneLightMask::channel(0).unionWith(SceneLightMask::channel(4));
-    UM_CHECK(!mask.isEmpty());
-    UM_CHECK(mask.reaches(SceneLightMask::all()));
-    UM_CHECK(!mask.reaches(SceneLightMask::channel(1)));
-    // Ascending, always -- a label that reshuffles between runs is a bug
-    // report.
-    const std::vector<int> numbers = mask.channelNumbers();
-    UM_CHECK(numbers.size() == 2 && numbers[0] == 1 && numbers[1] == 5);
-    UM_CHECK(SceneLightMask::all().channelNumbers().size() == 8);
-    UM_CHECK(SceneLightMask{}.channelNumbers().empty());
+static void testSoftnessIsTheOneKnobThatSplitsRadiusIntoCoreAndBand() {
+    // The radius says where the light ends, softness says how much of it
+    // is fade, and the curve says what the fade looks like. The three do
+    // not overlap, which is the design.
+    SceneLight light;
+    light.radius = 600.0f;
+    light.softness = 1.0f;
+    UM_CHECK_NEAR(light.innerRadius(), 0.0, 1e-4);
+    UM_CHECK_NEAR(light.bandWidth(), 600.0, 1e-4);
+    light.softness = 0.0f;
+    UM_CHECK_NEAR(light.innerRadius(), 600.0, 1e-4);
+    UM_CHECK_NEAR(light.bandWidth(), 0.0, 1e-4);
+    light.softness = 0.25f;
+    UM_CHECK_NEAR(light.innerRadius(), 450.0, 1e-3);
+    UM_CHECK_NEAR(light.bandWidth(), 150.0, 1e-3);
 }
 
-static void testTheFrontViewZoomIsClamped() {
-    SceneFrontView view;
-    UM_CHECK(view.isIdentity());
-    view.zoomBy(100.0f);
-    UM_CHECK(view.zoom == SceneFrontView::kMaxZoom);
-    view.zoomBy(0.0001f);
-    UM_CHECK(view.zoom == SceneFrontView::kMinZoom);
-    UM_CHECK(!view.isIdentity());
+static void testParamsCarriesTheMaskAsTheByteTheMathReads() {
+    SceneLight light;
+    light.mask = SceneLightMask::layer2() | SceneLightMask::layer5();
+    UM_CHECK(light.params().mask == light.mask.rawValue);
+    UM_CHECK(lightMaskReaches(light.params().mask, SceneLightMask::layer5().rawValue));
+    UM_CHECK(!lightMaskReaches(light.params().mask, SceneLightMask::layer1().rawValue));
 }
 
-static void testTheNeutralBackgroundIsARampAndNotATint() {
-    // Grey rather than the dark blue it used to be: a blue ground is not
-    // neutral, and every colour placed on the set was judged against a
-    // tint. Still a ramp, so an empty scene reads as a space with a floor.
-    const SceneFill neutral = SceneFill::neutral();
-    UM_CHECK(!neutral.isFlat());
-    UM_CHECK(neutral.topColor.x == neutral.topColor.y);
-    UM_CHECK(neutral.topColor.y == neutral.topColor.z);
-    UM_CHECK(neutral.bottomColor.x > neutral.topColor.x); // lighter floor
-    UM_CHECK(SceneFill::solid(Vec4(1, 0, 0, 1)).isFlat());
+static void testDirectionalLightHasNoPlace() {
+    // Moving it would be a control that changes nothing, which is worse
+    // than not having it.
+    UM_CHECK(sceneLightIsPositional(SceneLightKind::kPoint));
+    UM_CHECK(sceneLightIsPositional(SceneLightKind::kSpot));
+    UM_CHECK(!sceneLightIsPositional(SceneLightKind::kDirectional));
+}
+
+static void testEnumNamesRoundTripAndAreNotOrdinals() {
+    for (const SceneLightKind kind :
+         {SceneLightKind::kPoint, SceneLightKind::kSpot, SceneLightKind::kDirectional}) {
+        const auto back = sceneLightKindFromName(sceneLightKindName(kind));
+        UM_CHECK(back.has_value() && *back == kind);
+    }
+    for (const SceneLightBlend blend :
+         {SceneLightBlend::kNormal, SceneLightBlend::kAdditive, SceneLightBlend::kMultiply,
+          SceneLightBlend::kScreen}) {
+        const auto back = sceneLightBlendFromName(sceneLightBlendName(blend));
+        UM_CHECK(back.has_value() && *back == blend);
+    }
+    UM_CHECK(!sceneLightKindFromName("spotlight").has_value());
+    UM_CHECK(!sceneLightBlendFromName("overlay").has_value());
+    // The stored token is the Swift `rawValue`, not the C++ spelling, so
+    // renaming a case cannot silently rewrite every saved file.
+    UM_CHECK(std::string(sceneLightKindName(SceneLightKind::kDirectional)) == "directional");
+    UM_CHECK(std::string(sceneLightBlendName(SceneLightBlend::kScreen)) == "screen");
+}
+
+static void testLightOrderIsAuthoredBecauseBlendsDoNotCommute() {
+    // A vector and not a set: `multiply` and `screen` do not commute with
+    // the others, so "which light first" is a real question with a visible
+    // answer.
+    SceneComposition scene;
+    SceneLight first;
+    first.id = Uuid(1, 1);
+    first.blend = SceneLightBlend::kMultiply;
+    SceneLight second;
+    second.id = Uuid(2, 2);
+    second.blend = SceneLightBlend::kScreen;
+    scene.lights = {first, second};
+    UM_CHECK(scene.lights[0].blend == SceneLightBlend::kMultiply);
+    SceneComposition swapped = scene;
+    swapped.lights = {second, first};
+    // The model must be able to tell the two stagings apart at all.
+    UM_CHECK(!(scene == swapped));
+}
+
+static void testFalloffCurvesCompareByTheirStopsNotTheirTables() {
+    SceneLight a;
+    SceneLight b;
+    UM_CHECK(a.falloff == b.falloff);
+    b.falloff = LightFalloffCurve::linear();
+    UM_CHECK(!(a.falloff == b.falloff));
+    // The default really is `smooth` and not `linear` -- the two-stop
+    // "auto" curve would have been a straight line while being called
+    // smooth, which is why the flat tangents are written out.
+    UM_CHECK(a.falloff == LightFalloffCurve::smooth());
 }
 
 UM_TEST_MAIN_BEGIN()
-    testShearIsExpressedInScaledUnits();
-    testOrientationStaysARotationWhereDifferencingTheCardDoesNot();
-    testTheLiftPreservesLengthsAndAngles();
-    testACardIsFlatSoItsCornersLieInItsLightingPlane();
-    testTheTangentCarriesTheMirroringAndNotTheScale();
-    testRigFrameFreezesClampsAndWrapsWithoutGoingNegative();
-    testDrawOrderIsStableAndDepthDoesNotReorderAnything();
-    testVisibleLayersAndFrontSortingOrder();
-    testTheCameraFocalLengthIsOnePixelPerUnit();
-    testTheFlyPreviewOfTheShotKeepsTheShotsFraming();
-    testAMaterialThatAsksForNothingIsFlatAndSanitisingKeepsItSo();
-    testSanitisingRefusesTheValuesThatLookLikeOtherBugs();
-    testTheLightModelFillsTheMathsParamsWithoutRederivingAnything();
-    testTheMaskIsEightChannelsAndReadsBackInOrder();
-    testTheFrontViewZoomIsClamped();
-    testTheNeutralBackgroundIsARampAndNotATint();
+testDrawOrderIsBackFirstBySortingOrder();
+testTiesBreakOnTheArrayOrderAndStayThere();
+testTiesBreakWithinEachLayerNotAcrossThem();
+testDepthDoesNotReorderAnything();
+testNegativeSortingOrdersSortBehindZero();
+testFrontToBackIsExactlyTheReverse();
+testEmptySceneHasEmptyOrders();
+testVisibleDropsHiddenAndFullyTransparentLayers();
+testVisibleKeepsDrawOrder();
+testLookupByIdFindsAndMisses();
+testFrontSortingOrderStartsAtZeroAndThenLeads();
+testDefaultsAreTheOnesASceneOpensWith();
+testFocalLengthPutsScaleAtOneOnTheFocalPlane();
+testShotProjectionComesFromTheSceneCameraNotTheFlyCamera();
+testDegenerateDepthRangeStillProducesADivisibleProjection();
+testCameraLooksAlongIncreasingZ();
+testLightDerivedValuesComeFromThePhase4Math();
+testSoftnessIsTheOneKnobThatSplitsRadiusIntoCoreAndBand();
+testParamsCarriesTheMaskAsTheByteTheMathReads();
+testDirectionalLightHasNoPlace();
+testEnumNamesRoundTripAndAreNotOrdinals();
+testLightOrderIsAuthoredBecauseBlendsDoNotCommute();
+testFalloffCurvesCompareByTheirStopsNotTheirTables();
 UM_TEST_MAIN_END()

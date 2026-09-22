@@ -5,6 +5,7 @@
 #include <variant>
 
 #include "umeshcore/Editor/Tools/BoneTool.h"
+#include "umeshcore/Editor/Tools/PhysicsPreviewTool.h"
 #include "umeshcore/Editor/Tools/MoveTool.h"
 #include "umeshcore/Editor/Tools/RotateTool.h"
 #include "umeshcore/Editor/Tools/ScaleTool.h"
@@ -20,7 +21,8 @@ ToolManager::ToolManager() {
     tools_[ActiveTool::Rotate] = std::make_unique<RotateTool>();
     tools_[ActiveTool::Scale] = std::make_unique<ScaleTool>();
     tools_[ActiveTool::Skew] = std::make_unique<SkewTool>();
-    // .Mesh / .PhysicsPreview deliberately absent -- see the file header.
+    tools_[ActiveTool::PhysicsPreview] = std::make_unique<PhysicsPreviewTool>();
+    // .Mesh deliberately absent -- see the file header.
 }
 
 void ToolManager::setTool(EditorScene& scene, ActiveTool tool) {

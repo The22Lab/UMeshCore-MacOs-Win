@@ -75,6 +75,8 @@ struct LightFalloffStop {
     float value = 0.0f;
     std::optional<Vec2> inTangent;
     std::optional<Vec2> outTangent;
+
+    bool operator==(const LightFalloffStop&) const = default;
 };
 
 // How a light fades across its band.
@@ -98,6 +100,13 @@ public:
     explicit LightFalloffCurve(std::vector<LightFalloffStop> stops);
 
     const std::vector<LightFalloffStop>& stops() const { return stops_; }
+
+    // Two curves are equal when their STOPS are: the table is derived, so
+    // comparing it would only compare the same information 256 times, and
+    // would call two curves different when a rounding difference in the
+    // tabulation was the only thing between them. (Added for Phase 5's
+    // `SceneLight`, which is `Equatable` in Swift.)
+    bool operator==(const LightFalloffCurve& other) const { return stops_ == other.stops_; }
 
     // Value at a normalised position across the band.
     float value(float position) const;
@@ -236,6 +245,10 @@ struct SceneAmbient {
 
     Vec3 rgb() const { return color * (intensity > 0.0f ? intensity : 0.0f); }
     static SceneAmbient neutral() { return SceneAmbient{}; }
+
+    // Added for Phase 5's `SceneComposition`, which holds one and is
+    // `Equatable` in Swift.
+    bool operator==(const SceneAmbient&) const = default;
 };
 
 class SceneLighting {

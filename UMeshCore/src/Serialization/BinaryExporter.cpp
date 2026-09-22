@@ -39,7 +39,14 @@ std::optional<std::vector<std::uint8_t>> readFileBytes(const std::string& path) 
 } // namespace
 
 std::vector<std::uint8_t> BinaryExporter::exportScene(
-    const EditorScene& scene, const std::unordered_map<Uuid, AssetRecord, UuidHash>& assets) const {
+    const EditorScene& scene,
+    const std::unordered_map<Uuid, AssetRecord, UuidHash>& assets) const {
+    return exportScene(scene, assets, {});
+}
+
+std::vector<std::uint8_t> BinaryExporter::exportScene(
+    const EditorScene& scene, const std::unordered_map<Uuid, AssetRecord, UuidHash>& assets,
+    const std::vector<SceneComposition>& compositions) const {
     // Rough sizing heuristic mirroring the Swift source's own estimate:
     // average bone ~64B, image header ~96B. Over-reserving avoids
     // reallocation for typical projects.
@@ -80,14 +87,182 @@ std::vector<std::uint8_t> BinaryExporter::exportScene(
     writeAnimationsChunk(writer, scene);
     chunkCount += 1;
 
-    // SCENES chunk intentionally not written -- see BinaryExporter.h's
-    // file header. `EditorScene` has no `sceneCompositions`, so the Swift
-    // source's own `if !scene.sceneCompositions.isEmpty` gate is
-    // unconditionally false in this port today.
+    // Swift's own gate, kept exactly: no compositions, no chunk. A rig
+    // that never used Scene mode therefore produces a file identical to
+    // one from before this chunk existed, and a runtime predating it skips
+    // an unknown chunk by its size field -- which is what the format was
+    // designed for.
+    if (!compositions.empty()) {
+        writeScenesChunk(writer, scene, compositions);
+        chunkCount += 1;
+    }
 
     writer.patchU32(chunkCount, chunkCountOffset);
     writer.patchU32(static_cast<std::uint32_t>(writer.count() - payloadStart), payloadSizeOffset);
     return writer.data();
+}
+
+// SCENES layout (version 1), as the Swift source documents it:
+//   u16 version, u32 compositionCount
+//   per composition: uuid, string name, u32 duration, u32 fps,
+//                    f32[2] renderSize, f32[8] background (top then bottom),
+//                    f32[9] camera, u32 layerCount,
+//     per layer: uuid, string name, u8 kind, u8 hidden, f32 opacity,
+//                f32[2] pos, f32 z, f32 rot, f32[3] rot3D, f32[2] scale,
+//                then the kind's payload
+//     u32 cameraTrackCount
+//       per track: u8 property, u32 keyCount, then (u32 frame, f32[n] value)
+void BinaryExporter::writeScenesChunk(
+    BinaryWriter& writer, const EditorScene& scene,
+    const std::vector<SceneComposition>& compositions) const {
+    const std::size_t off = writer.openChunk(UMeshBinaryFormat::ChunkID::Scenes);
+    writer.writeU16(UMeshBinaryFormat::ChunkVersion::scenes);
+    writer.writeU32(static_cast<std::uint32_t>(compositions.size()));
+
+    const auto writeColor = [&writer](const Vec4& c) {
+        writer.writeF32(c.x);
+        writer.writeF32(c.y);
+        writer.writeF32(c.z);
+        writer.writeF32(c.w);
+    };
+
+    for (const SceneComposition& composition : compositions) {
+        writer.writeUuid(composition.id);
+        writer.writeString(composition.name);
+        // Floored at 1, as Swift does: a zero-frame or zero-fps scene has
+        // no playhead, and the field is unsigned so a negative would wrap
+        // to a duration of four billion frames.
+        writer.writeU32(static_cast<std::uint32_t>(std::max(composition.durationInFrames, 1)));
+        writer.writeU32(static_cast<std::uint32_t>(std::max(composition.fps, 1)));
+        writer.writeF32(composition.renderSize.x);
+        writer.writeF32(composition.renderSize.y);
+
+        writeColor(composition.background.topColor);
+        writeColor(composition.background.bottomColor);
+
+        const SceneCamera& camera = composition.camera;
+        writer.writeF32(camera.position.x);
+        writer.writeF32(camera.position.y);
+        writer.writeF32(camera.positionZ);
+        writer.writeF32(camera.rotation3D.x);
+        writer.writeF32(camera.rotation3D.y);
+        writer.writeF32(camera.rotation3D.z);
+        writer.writeF32(camera.fieldOfView);
+        writer.writeF32(camera.nearZ);
+        writer.writeF32(camera.farZ);
+
+        // IN DRAW ORDER, back first. The array is only the tie-break now,
+        // so writing it raw would hand the runtime a stacking that is not
+        // the one the editor draws -- and the chunk carries no layer
+        // number for it to re-sort by, on purpose: what a player needs is
+        // the order, not the arithmetic that produced it.
+        writer.writeU32(static_cast<std::uint32_t>(composition.layers.size()));
+        for (const SceneLayer& layer : composition.drawOrderedLayers()) {
+            writer.writeUuid(layer.id);
+            writer.writeString(layer.name);
+
+            // The wire codes, by explicit branch. Never a cast off the
+            // variant's index: the alternative order is a C++ detail and
+            // this is a frozen format.
+            std::uint8_t kind = 2;
+            if (std::holds_alternative<SceneRigContent>(layer.content)) {
+                kind = 0;
+            } else if (std::holds_alternative<ScenePlateContent>(layer.content)) {
+                kind = 1;
+            }
+            writer.writeU8(kind);
+            writer.writeU8(layer.isHidden ? 1 : 0);
+            writer.writeF32(layer.opacity);
+            writer.writeF32(layer.position.x);
+            writer.writeF32(layer.position.y);
+            writer.writeF32(layer.positionZ);
+            writer.writeF32(layer.rotation);
+            writer.writeF32(layer.rotation3D.x);
+            writer.writeF32(layer.rotation3D.y);
+            writer.writeF32(layer.rotation3D.z);
+            writer.writeF32(layer.scale.x);
+            writer.writeF32(layer.scale.y);
+
+            // NOTE the shear and the material are NOT in this chunk. That
+            // is Swift's layout, not an omission here: the runtime format
+            // predates both, and adding fields to a frozen chunk without a
+            // version bump is how a reader starts parsing the next record
+            // as part of this one.
+            if (const SceneRigContent* rig = std::get_if<SceneRigContent>(&layer.content)) {
+                writer.writeUuid(rig->clipId);
+                writer.writeF32(rig->speed);
+                writer.writeU32(static_cast<std::uint32_t>(std::max(rig->startFrame, 0)));
+                writer.writeU8(rig->loops ? 1 : 0);
+            } else if (const ScenePlateContent* plate =
+                           std::get_if<ScenePlateContent>(&layer.content)) {
+                writer.writeUuid(plate->assetId);
+            } else if (const SceneFillContent* fill =
+                           std::get_if<SceneFillContent>(&layer.content)) {
+                writeColor(fill->fill.topColor);
+                writeColor(fill->fill.bottomColor);
+            }
+        }
+
+        // Once per composition, and every composition gets the SAME
+        // tracks, because they come from the project's single
+        // `sceneAnimationClip`. Swift's behaviour and the format's shape,
+        // reproduced rather than "fixed" -- but it does mean the format
+        // cannot express per-composition camera animation today.
+        writeSceneCameraTracks(writer, scene);
+    }
+
+    writer.closeChunk(off);
+}
+
+// The camera's keyframes. Channel counts are implied by the property, so a
+// reader that knows the property list can skip a track it does not
+// recognise without knowing what it meant.
+void BinaryExporter::writeSceneCameraTracks(BinaryWriter& writer, const EditorScene& scene) const {
+    const Uuid target = SceneAnimationTarget::camera();
+
+    std::vector<const AnimationTrack*> tracks;
+    for (const AnimationTrack& track : scene.sceneAnimationClip.tracks()) {
+        if (track.targetID == target && !track.keyframes.empty()) tracks.push_back(&track);
+    }
+    writer.writeU32(static_cast<std::uint32_t>(tracks.size()));
+
+    for (const AnimationTrack* track : tracks) {
+        std::uint8_t code = 255;
+        switch (track->property) {
+            case AnimationTrackProperty::CameraTranslate: code = 0; break;
+            case AnimationTrackProperty::CameraTranslateZ: code = 1; break;
+            case AnimationTrackProperty::CameraRotate3D: code = 2; break;
+            case AnimationTrackProperty::CameraRoll: code = 3; break;
+            case AnimationTrackProperty::CameraFOV: code = 4; break;
+            default: code = 255; break;
+        }
+        writer.writeU8(code);
+        writer.writeU32(static_cast<std::uint32_t>(track->keyframes.size()));
+
+        // Sorted by frame. `AnimationTrack`'s constructor already sorts,
+        // but a track assembled another way must not write a timeline that
+        // runs backwards, and the cost is nothing next to the file.
+        std::vector<const Keyframe*> keys;
+        keys.reserve(track->keyframes.size());
+        for (const Keyframe& key : track->keyframes) keys.push_back(&key);
+        std::sort(keys.begin(), keys.end(),
+                  [](const Keyframe* a, const Keyframe* b) { return a->frame < b->frame; });
+
+        for (const Keyframe* key : keys) {
+            writer.writeU32(static_cast<std::uint32_t>(std::max(key->frame, 0)));
+            if (const Vector2Value* v = std::get_if<Vector2Value>(&key->value)) {
+                writer.writeF32(v->value.x);
+                writer.writeF32(v->value.y);
+            } else if (const ScalarValue* s = std::get_if<ScalarValue>(&key->value)) {
+                writer.writeF32(s->value);
+            } else {
+                // A camera track can only hold those two kinds; anything
+                // else is a bug upstream, and writing a zero keeps the
+                // stream aligned so the rest of the file still parses.
+                writer.writeF32(0.0f);
+            }
+        }
+    }
 }
 
 void BinaryExporter::writeMetaChunk(BinaryWriter& writer, const EditorScene& scene) const {
