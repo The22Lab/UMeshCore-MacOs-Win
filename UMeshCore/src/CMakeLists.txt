@@ -30,6 +30,7 @@ add_library(umeshcore STATIC
     Editor/ToolManager.cpp
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp
+    Serialization/ProjectDocument.cpp
     Serialization/SavedAnimation.cpp
     Serialization/SavedGeometry.cpp
     Serialization/SavedSceneImage.cpp

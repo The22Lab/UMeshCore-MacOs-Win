@@ -751,10 +751,50 @@ Special-case validation needs, carried over into each phase's own tests:
    partially applying, and a skin proving described-but-empty and
    not-described slots stay distinguishable across the round trip.
 
-   **Not yet started**: the bucket-2 types with no UMeshCore port yet (`TextureAsset`, `HierarchyItem`, `NamedAnimation`,
-   `CameraState`); the actual `.umesh` project package encoder/decoder
-   (manifest + `Assets/` directory + SHA-256 dedup) tying it all together
-   as `SavedProjectDocument`; and the UMJSON document builder, which is a
+   **The manifest itself: done.** `Serialization/ProjectDocument.h/.cpp`
+   ports `SavedProjectDocument`, the root object written to `project.json`.
+   It is shaped as the FILE's model rather than `EditorScene`'s, so it
+   carries fields the scene aggregate does not model (`playbackLoops`,
+   `projectFramesPerSecond`, `authoredDrawOrder`) instead of dropping them,
+   and `projectDocumentFrom(scene, assets)` / `applyProjectDocument(doc,
+   scene)` convert at the edges -- the latter mutating the scene in place,
+   matching Swift, where loading calls `SceneManager.restoreProject(...)`
+   on the existing instance rather than constructing a fresh one (and
+   clearing selection, drag previews and undo history, since nothing
+   pointing into the replaced scene survives). `AssetRecord` gained a
+   `role` (`SavedTextureAsset.role`, optional, absent meaning albedo) and
+   a note that its `size` is deliberately NOT persisted here: Swift's
+   `TextureAsset.size` comes from the decoded texture, so it is recovered
+   by loading the file rather than read back from the manifest.
+
+   One deliberate addition with no Swift counterpart, and why it exists:
+   `ProjectDocument::unrecognized` keeps every top-level key this port
+   does not model yet -- `hierarchyItems`, `editorState`, `camera`
+   (`SavedCameraState`), `animations` (the `NamedAnimation` library),
+   `sceneCompositions`/`selectedSceneCompositionID`/`sceneViewCamera`
+   (Phase 5) -- verbatim on read, and writes them back unchanged. Swift
+   needs no such mechanism because its `Codable` models every field; this
+   port models a growing subset, and without it a load/save cycle through
+   UMeshCore would silently destroy a real project's Scene mode and
+   animation library. Tested explicitly, including that a modelled key
+   never leaks into it.
+
+   Tested: `tests/ProjectDocumentTests.cpp` (8 tests) --
+   `SavedProjectDocument.empty`'s "new project" defaults, a full document
+   round trip through real serialized text, albedo's role being omitted
+   from the file, five unmodelled sections surviving a read/write cycle
+   intact, `applyProjectDocument` restoring a scene while clearing
+   selection/preview/undo, the missing-scene-clip fallback, and a minimal
+   old-shaped file decoding with every optional section empty. All 29 test
+   binaries pass.
+
+   **Not yet started**: the package layer around the manifest -- the
+   `.umesh` directory itself, its `Assets/` folder, and the SHA-256 content
+   deduplication that writes identical PNGs once (the manifest is ready for
+   it; that layer is file I/O plus a hash, no model work); the bucket-2
+   types with no UMeshCore port yet (`TextureAsset` beyond `AssetRecord`,
+   `HierarchyItem`, `NamedAnimation`, `CameraState`); and the UMJSON
+   document builder, which is a
    fully separate model from `Saved*` (see the JSON-foundation entry
    above) and needs its own pass once the rig/mesh/animation JSON pieces
    above exist to draw from.

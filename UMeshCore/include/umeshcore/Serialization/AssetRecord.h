@@ -23,6 +23,11 @@
 
 namespace umeshcore {
 
+// What a texture is FOR, mirroring Swift's `AssetRole`. Persisted in the
+// project manifest (`SavedTextureAsset.role`), where it is optional and
+// absent means Albedo -- i.e. ordinary artwork.
+enum class AssetRole { Albedo, Normal, Height };
+
 struct AssetRecord {
     Uuid id;
     std::string name;
@@ -31,7 +36,13 @@ struct AssetRecord {
     // `asset.fileURL.lastPathComponent`); the full path is used to locate
     // and read the file's bytes in "embed" mode.
     std::string filePath;
+    // Pixel dimensions. NOT persisted in the project manifest: Swift's
+    // `TextureAsset.size` comes from the decoded texture, so it is
+    // recovered by loading the file, not read back from the file that
+    // references it. The binary exporter (which has the size in hand at
+    // export time) does write it.
     Vec2 size;
+    AssetRole role = AssetRole::Albedo;
 };
 
 } // namespace umeshcore
