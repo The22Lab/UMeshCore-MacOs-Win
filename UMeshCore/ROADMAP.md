@@ -1046,11 +1046,94 @@ Special-case validation needs, carried over into each phase's own tests:
    angle-built and frame-built cameras projecting identically. All 33 test
    binaries pass.
 
-   **Not yet started**: frustum culling (`SceneCulling.swift`, whose planes
-   are extracted from the same view-projection matrix the drawing divides
-   by, deliberately, so they cannot drift from it), the POD vertex/uniform
-   structs (`SceneGPU/SceneGPUTypes.swift`), the skin palette, gizmo mesh
-   building, lighting math, and the Metal/DirectX backends themselves.
+   `Render/SceneCulling.h/.cpp` ports `Render/SceneCulling.swift` --
+   `SceneFrustum` (the six world-space planes a frame decides with) and
+   `FrameRegion` (the whole-pixel rectangle a layer is allowed to touch).
+   Second because it is the first consumer of `SceneProjection`, and it
+   consumes it in the one way that matters: the planes are pulled out of
+   `viewProjection()` (Gribb & Hartmann), THE SAME matrix the drawing
+   divides by, never rebuilt from the camera's field of view and near/far.
+   The Swift header is explicit that rebuilding them reads more clearly and
+   is wrong: the two agree only until somebody changes one, and the symptom
+   when they drift is an object popping out at the edge of the screen while
+   still visibly on it. That warning is sharper in this port than it was in
+   Swift, because the entire point of a shared core is that a Metal backend
+   and a DirectX backend do NOT each re-derive it -- the same
+   three-copies-of-world-to-screen failure `SceneProjection` exists to
+   prevent.
+
+   The one structural thing to know about a culler, and the thing this
+   file's tests are built around: its error is allowed in ONE direction. It
+   may KEEP something invisible (wasted work -- the Swift harness measured
+   1.3 % of 20 000 random cameras) and may never DISCARD something visible
+   (an object vanishing). So `culls` is the conservative test -- a hull is
+   culled only when it lies entirely outside ONE plane, and a hull
+   straddling two is kept even when it really is outside, because deciding
+   otherwise needs a separating-axis test and the cost of being wrong is
+   not symmetric.
+
+   Near and far are both extracted and both honoured, which is a pairing
+   rather than a coincidence. In Swift the far plane predated
+   `clipAndProject`'s far cut and for a while discarded cards the renderer
+   would have drawn -- 51 layers out of 20 000, every one of them putting
+   pixels on the canvas -- because `farZ` went into the projection matrix
+   and nothing read it back. The C++ port has had the far cut since
+   `SceneProjection` landed, so the two agree by construction; breaking
+   either side of that still breaks the other.
+
+   Two details that are easy to "clean up" into bugs, documented in place:
+   NEAR is row 2 ALONE, not `w + z`, because clip z runs `0...w` in the
+   Metal/Direct3D convention this projection writes out explicitly (the
+   OpenGL form would put the near plane half a frustum too far back); and a
+   row has to be gathered ACROSS the stored columns, since reading
+   `columns[0]` as a row is the classic way to get a transposed frustum
+   that culls everything in front of the camera. A degenerate (zero-normal)
+   plane is left unscaled rather than divided by ~0, because a NaN plane
+   compares false everywhere and would cull the whole scene -- the one
+   direction this file may not fail in.
+
+   **Two documented divergences, both in `FrameRegion::bounding`:**
+   - The clamp to the frame happens in float, BEFORE the conversion to
+     `int`, where Swift converts first and clamps after. Swift's order
+     traps on a coordinate too large for `Int`; the same conversion is
+     undefined in C++. Behaviour-preserving: every in-range value gives the
+     identical region, and out-of-range ones are empty or whole-frame
+     either way.
+   - "Non-finite" is tested on every point rather than on the reduced box.
+     Swift reduces first with `simd_min`/`simd_max`, which are fmin-based
+     and return the OTHER operand for a NaN -- so a NaN corner among finite
+     ones is quietly dropped there, and only an all-NaN set (or an
+     infinity, which does propagate) reaches the guard. Dropping a corner
+     shrinks the region, and a region too small clips pixels off a layer
+     that IS on screen. The guard's evident intent is the whole frame, so
+     that is what a NaN gets here.
+
+   Tested: `tests/SceneCullingTests.cpp` (19 tests). The central one is a
+   sweep of 20 000 random cameras and points that asks `SceneProjection`
+   whether a point lands strictly inside the viewport between near and far,
+   and asserts `culls` never discards one that does -- the asymmetric rule
+   itself, checked against the same matrix the frustum comes from rather
+   than against re-derived plane coefficients. Its counterpart builds the
+   documented straddling case (a segment passing outside the frustum's
+   top-left corner), proves INDEPENDENTLY through the projection that all
+   21 sampled points on it are off screen, then asserts the culler keeps it
+   anyway -- so the conservatism is pinned as behaviour, not left as a
+   comment. The rest: plane normalisation making `margin` a world distance,
+   inward-facing planes (the transposed-frustum check), the near plane's
+   signed distance being a real world distance, behind-the-eye and
+   beyond-far both culled, an empty hull culled, a margin in world units,
+   a singular matrix producing finite planes, outward rounding in both
+   directions, y-down with no flip, clipping to the frame, an off-screen
+   region reading as empty, no-points vs non-finite giving opposite
+   answers, and a projected quad's region containing every corner it came
+   from. All 34 test binaries pass.
+
+   **Not yet started**: the fly-camera orbit (`SceneViewProjection.swift`,
+   of which `cameraBasis` is already inside `SceneProjection`), the POD
+   vertex/uniform structs (`SceneGPU/SceneGPUTypes.swift`), the skin
+   palette, gizmo layout and mesh building, arc/sphere geometry, lighting
+   math, the frame budget, the reference shader math, and the
+   Metal/DirectX backends themselves. `CLAUDE.md` carries the ordered list.
 5. **Scene compositing / lighting / physics secondary motion / export** —
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)

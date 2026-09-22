@@ -46,7 +46,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-33 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+34 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -106,7 +106,7 @@ errores reales.
 | 1 | Math + modelo de datos | ✅ Completa salvo 3 conveniencias de editor |
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
-| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 1 de ~9 piezas** |
+| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 2 de ~10 piezas** |
 | 5 | Scene compositing, luces, física secundaria, export | ⬜ No empezada |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
@@ -216,19 +216,54 @@ tenía término `rotation3D`, así que un sprite rotado en 3D se exportaba
 distinto de como se veía. Dos backends de render re-derivando esto
 reproducirían ese bug exacto.
 
+**`Render/SceneCulling.h/.cpp`** ← `Render/SceneCulling.swift` (145 L).
+`SceneFrustum` (los seis planos en espacio de mundo) + `FrameRegion` (el
+rectángulo de píxeles enteros que una capa puede tocar). 19 tests.
+
+Segundo porque es el primer consumidor de `SceneProjection`, y lo consume
+del único modo que importa: los planos se extraen de `viewProjection()`,
+**la misma matriz por la que divide el dibujo**, nunca reconstruidos desde
+fov/near/far de la cámara.
+
+Tres cosas que conviene saber antes de tocarlo:
+
+- **El error de un culler solo se permite en una dirección.** Puede
+  conservar algo invisible (trabajo perdido, 1.3 % medido sobre 20 000
+  cámaras); **nunca** descartar algo visible. Por eso `culls` es
+  conservador: descarta solo si el hull entero queda fuera de **un** plano.
+  Un hull a caballo entre dos se conserva aunque esté fuera de verdad.
+- **NEAR es la fila 2 sola**, no `w + z`: el clip z va `0...w`
+  (convención Metal/D3D). La forma OpenGL dejaría el plano near medio
+  frustum atrás.
+- Una fila se junta **atravesando** las columnas almacenadas. Leer
+  `columns[0]` como fila da el frustum transpuesto clásico, que descarta
+  todo lo que está delante de la cámara.
+
+Dos divergencias documentadas, ambas en `FrameRegion::bounding`: el clamp
+al frame ocurre en float **antes** de convertir a `int` (Swift convierte
+primero y atrapa/es UB con coordenadas enormes), y la comprobación de
+no-finito se hace **por punto** y no sobre la caja ya reducida (el
+`simd_min` de Swift es fmin, así que se traga un NaN suelto y encoge la
+región — recortando píxeles de una capa que sí está en pantalla).
+
+El test central barre 20 000 cámaras y puntos aleatorios y afirma que nada
+que `SceneProjection` ponga dentro del viewport se descarta nunca. Su
+contraparte construye el caso de straddling documentado, demuestra **por
+la proyección** que está fuera de pantalla, y afirma que el culler lo
+conserva igual.
+
 ### Pendiente, en orden de dependencia
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 1 | Frustum culling | `Render/SceneCulling.swift` | 145 | Los planos se **extraen de la misma view-projection matrix** por la que divide el dibujo (Gribb & Hartmann); reconstruirlos desde la cámara los deja derivar. Regla asimétrica: puede conservar algo invisible (trabajo perdido), **nunca** descartar algo visible (objeto que desaparece). |
-| 2 | Cámara de vuelo | `Render/SceneViewProjection.swift` | 177 | `cameraBasis` ya está dentro de `SceneProjection.h`; falta órbita y `eye`. |
-| 3 | Structs POD de GPU | `Render/SceneGPU/SceneGPUTypes.swift` | 278 | **Leer primero su cabecera**: el padding está deletreado a mano porque Metal alinea `float3` a 16 bytes. El drift produce una luz leyendo el radio de su vecina. |
-| 4 | Paleta de skinning | `Render/SceneGPU/SceneSkinPalette.swift` | 170 | |
-| 5 | Layout + mallas de gizmo | `SceneGizmoLayout.swift` (135) + `SceneGizmoMeshBuilder.swift` (478) | 613 | Depende de `worldLengthForPixels` (ya portado). |
-| 6 | Geometría auxiliar | `ArcGeometryBuilder.swift` (152) + `SphereGeometryBuilder.swift` (140) | 292 | |
-| 7 | Matemática de luces | `Render/SceneLighting.swift` | 544 | Solapa con Fase 5: portar la *matemática*, no el modelo `SceneLight`. |
-| 8 | Presupuesto de frame | `Render/SceneRenderBudget.swift` | 174 | |
-| 9 | Shader math de referencia | `Render/SceneGPU/SceneShaders.metal` | 1022 | Autorar **una vez** en C++ y transcribir a MSL y HLSL con cross-check numérico (ROADMAP Riesgo #5). |
+| 1 | Cámara de vuelo | `Render/SceneViewProjection.swift` | 177 | `cameraBasis` ya está dentro de `SceneProjection.h`; falta órbita y `eye`. |
+| 2 | Structs POD de GPU | `Render/SceneGPU/SceneGPUTypes.swift` | 278 | **Leer primero su cabecera**: el padding está deletreado a mano porque Metal alinea `float3` a 16 bytes. El drift produce una luz leyendo el radio de su vecina. |
+| 3 | Paleta de skinning | `Render/SceneGPU/SceneSkinPalette.swift` | 170 | |
+| 4 | Layout + mallas de gizmo | `SceneGizmoLayout.swift` (135) + `SceneGizmoMeshBuilder.swift` (478) | 613 | Depende de `worldLengthForPixels` (ya portado). |
+| 5 | Geometría auxiliar | `ArcGeometryBuilder.swift` (152) + `SphereGeometryBuilder.swift` (140) | 292 | |
+| 6 | Matemática de luces | `Render/SceneLighting.swift` | 544 | Solapa con Fase 5: portar la *matemática*, no el modelo `SceneLight`. |
+| 7 | Presupuesto de frame | `Render/SceneRenderBudget.swift` | 174 | |
+| 8 | Shader math de referencia | `Render/SceneGPU/SceneShaders.metal` | 1022 | Autorar **una vez** en C++ y transcribir a MSL y HLSL con cross-check numérico (ROADMAP Riesgo #5). |
 
 ### Qué NO portar de `Render/`
 
