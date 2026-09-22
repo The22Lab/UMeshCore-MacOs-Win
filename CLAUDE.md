@@ -47,7 +47,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-41 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+42 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -108,7 +108,7 @@ errores reales.
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
 | 4 | Capa de geometría de render compartida | ✅ Completa (1 pieza descartada: código muerto) |
-| **5** | **Scene compositing, luces, física secundaria, export** | **⬜ Siguiente** |
+| **5** | **Scene compositing, luces, física secundaria, export** | **🔨 En curso — el modelo de capa** |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
 
@@ -522,20 +522,61 @@ Si aparecen en otra copia del proyecto, traerlos seguiría siendo valioso.
 
 ---
 
-## Fase 5 — de dónde partir cuando llegue
+## Fase 5 — la fase actual
 
-Todo el namespace de Scene compositing, en `Data/Scene/`. Ninguno tiene
-equivalente en UMeshCore: `SceneComposition.swift` (241),
-`SceneLayer.swift` (282), `SceneLight.swift` (390), `SceneCamera.swift`,
-`SceneMaterial.swift`, `ScenePersistence.swift`, `ScenePlayback.swift`,
-`SceneSelection.swift`.
+Todo el namespace de Scene compositing, en `Data/Scene/`. Portarlo cierra
+de golpe cinco pendientes: el chunk SCENES, las secciones de manifiesto
+que hoy viven en `unrecognized`, los dos constructores de conveniencia de
+`SceneProjection`, `cardCorners`/`cardPoint` de la cámara de vuelo, y
+`PhysicsPreviewTool`.
 
-Portarlos cierra de golpe cuatro pendientes: el chunk SCENES, las secciones
-de manifiesto que hoy viven en `unrecognized`, los dos constructores de
-conveniencia de `SceneProjection`, `cardCorners`/`cardPoint` de la cámara
-de vuelo, y `PhysicsPreviewTool`.
+### Hecho
 
-Export: `Export/ExportManager.swift` (135) + `Export/ExportSettings.swift`.
+**`Scene/SceneLayer.h/.cpp`** ← `Data/Scene/SceneLayer.swift` (282 L):
+`SceneFill`, `SceneLayerContent` (variant de rig/plate/fill) y
+`SceneLayer`. **`Scene/SceneMaterial.h`** ← `SceneMaterial.swift` (238 L).
+**`Scene/SceneLightMask.h`**, sacado de `SceneLight.swift` a un header
+propio porque lo necesitan tres cosas y solo una es una luz (la capa, el
+material y la luz) — meterlo en el header de la luz obligaría a una capa a
+incluir una luz para describirse. 31 tests.
+
+Esto desbloquea `cardCorners`/`cardPoint` de `SceneViewCamera` y el
+`orientation()` que espera `SceneLayerUniforms`.
+
+Tres cosas que conviene saber antes de tocarlo:
+
+- **La invariante fundacional: toda capa es PLANA.** Su Z es constante en
+  toda la carta. Es lo que colapsa la perspectiva a un solo factor de
+  escala, lo que hace que el parallax no cueste nada, y —menos obvio— lo
+  que hace la **iluminación exacta**: `SceneLighting` interseca el rayo de
+  un píxel con `lightingPlane()` y obtiene el punto de mundo que de verdad
+  está ahí, contenga lo que contenga la capa.
+- **`orientation()` existe aparte de `planePoint` por un bug entero.** El
+  gizmo sacaba su frame diferenciando la transformada de la carta, que
+  pasa por `planePoint` — escala, **shear**, roll. Normalizar los dos
+  vectores arreglaba sus longitudes y no podía hacer nada con el **ángulo**
+  entre ellos, así que una carta con shear le daba al gizmo un frame que
+  no era una rotación. `orientation()` es roll y luego tilt: ni la escala
+  ni el shear lo alcanzan.
+- **`sortingOrder` y `positionZ` van al revés a propósito.** Mayor
+  `sortingOrder` es **más al frente**; mayor `positionZ` es **más lejos**.
+  Y la profundidad **no reordena nada**: empujar una carta en Z cambia
+  cuánto mide y cuánto se desliza, nunca quién tapa a quién.
+
+`planePoint` es escala → shear → roll, y **ese orden es la definición**:
+el shear va en unidades ya escaladas, igual que `SceneImage` aplica skew.
+
+### Pendiente, en el orden que recomienda `HANDOFF.md`
+
+| # | Portar | Referencia Swift | L | Notas |
+|---|---|---|---|---|
+| 1 | Composición | `SceneComposition.swift` | 241 | `drawOrderedLayers` es un sort **estable** escrito a mano: el orden del array rompe empates, y un sort inestable haría que dos cartas de la misma capa se intercambiaran entre arranques. |
+| 2 | Modelo de luz | `SceneLight.swift` | 390 | Solo el **modelo**: la matemática ya está en `Render/SceneLighting.h`. Los enums son `String`-backed para el formato de archivo y se mapean a `SceneLightKind`/`SceneLightBlend` con `switch` explícito, nunca cast. |
+| 3 | Cámara del shot | `SceneCamera.swift` | 59 | Cierra `SceneProjection::init(camera:)` / `init(shot:)`. |
+| 4 | Persistencia | `ScenePersistence.swift` | 463 | Cierra `writeScenesChunk` y saca de `ProjectDocument::unrecognized` las secciones de Scene. El test de punta a punta de `unrecognized` debe seguir pasando para lo que *siga* sin modelarse. |
+| 5 | Resto del modelo | `ScenePlayback.swift` (105) + `SceneSelection.swift` (47) | 152 | |
+| 6 | `PhysicsPreviewTool` | Fase 2, bloqueado | 59 | Solo necesita que `EditorScene` tenga una instancia viva de `PhysicsConstraintSystem`. |
+| 7 | Export | `Export/ExportManager.swift` (135) + `ExportSettings.swift` | — | |
 
 ---
 

@@ -1459,6 +1459,84 @@ Special-case validation needs, carried over into each phase's own tests:
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)
    with platform-swapped codec backends behind a common interface.
+   *Status: started.* `Scene/SceneLayer.h/.cpp` ports
+   `Data/Scene/SceneLayer.swift` (`SceneFill`, `SceneLayerContent`,
+   `SceneLayer`), `Scene/SceneMaterial.h` ports
+   `Data/Scene/SceneMaterial.swift`, and `Scene/SceneLightMask.h` lifts
+   `SceneLightMask` out of `SceneLight.swift` into a header of its own.
+
+   The mask gets its own file because three different things need it and
+   only one of them is a light: a layer's `lightMask` says which channels
+   it sits on, a material's `shadowCastMask`/`shadowedMask` say which it
+   casts into and catches from, and a light's `mask` says which it
+   reaches. Leaving it in the light's header would make a layer include a
+   light in order to describe itself, which is backwards -- the mask is
+   the vocabulary the three share, not a property of any one of them.
+
+   `SceneLayer` first because it is what the earlier phases were waiting
+   on, and they were waiting on purpose. `SceneViewCamera`'s header names
+   `cardCorners`/`cardPoint` as blocked on `planePoint`/`liftToWorld`/
+   `worldOrigin`, and `SceneLayerUniforms` on `orientation()`; inventing a
+   layer type inside Render would have meant re-transcribing this lift,
+   which is the "two transcriptions of a rotation" failure
+   `SceneProjection`'s header exists because of. There is now exactly one
+   transcription.
+
+   What the file is built around, and what the tests assert rather than
+   restate:
+   - **Every layer is FLAT** -- its Z is constant across the whole card.
+     That is what collapses the perspective to a single scale factor, what
+     makes parallax cost nothing, and, less obviously, what makes LIGHTING
+     exact rather than approximate: `SceneLighting` intersects the ray
+     through a pixel with `lightingPlane()` and gets the world point that
+     is actually there, whatever the layer contains and however its meshes
+     are deformed.
+   - **`orientation()` is separate from `planePoint` because of a whole
+     bug.** The gizmo used to take its frame by differencing the card's
+     transform, which runs points through `planePoint` -- scale, then
+     SHEAR, then roll. Normalising the two vectors that came back fixed
+     their lengths and could do nothing about the ANGLE between them, so a
+     sheared card handed the gizmo a frame that was not a rotation, and a
+     matrix like that shears every arrow it multiplies. `orientation()` is
+     roll then tilt, with no path for scale or shear to reach it. The test
+     therefore checks orthogonality, not length: length alone is exactly
+     what the broken version already had.
+   - **`planePoint` is scale, then shear, then roll, and that order IS the
+     definition.** Shear after the scale means it is expressed in the
+     card's scaled units -- the same order `SceneImage` applies skew in --
+     so a scaled card slants by the amount the number says rather than by
+     that amount times its scale. The test uses a non-uniform scale,
+     because a uniform one cannot tell the two orders apart.
+   - **`lightingTangent` reads only the SIGN of the scale.** A mirrored
+     card draws its artwork reversed, so image +x points the other way and
+     the handedness is `sign(scale.x * scale.y)`; a card that is not told
+     it is mirrored lights its relief from the wrong side, which is
+     entirely plausible in a still and obvious the moment a light crosses
+     it. The magnitude is deliberately left out, so relief does not
+     stretch with a card scaled 3x wide.
+   - **`sortingOrder` and `positionZ` count in opposite directions**, on
+     purpose: Z is a distance and things further off have more of it,
+     while a stacking order counts upward towards the viewer in every tool
+     that has one. Depth still reorders nothing.
+
+   One documented divergence, the same one `SceneCulling.cpp` already
+   makes and for the same reason: `rigFrame` converts
+   `round(sceneFrame * speed)` through a saturating cast. Swift traps on a
+   value outside `Int`, and the conversion is undefined in C++; a NaN
+   speed out of a hand-edited file is what reaches it. The clamp or wrap
+   that follows puts any saturated value back inside the clip, so no
+   in-range input is affected.
+
+   `SceneMaterial`'s default is a hard requirement rather than a taste,
+   and the test says so as an equality with a freshly defaulted material
+   rather than field by field -- a field added later cannot escape the
+   bit-for-bit promise by not being listed. `sanitized` replaces a
+   non-finite value with the DEFAULT and only then clamps, which is worth
+   stating because one test asserted the opposite first and the code was
+   right: an infinite `parallaxDepth` comes back 0.05, not 0.5.
+
+   Tested: `tests/SceneLayerTests.cpp` (31 tests). All 42 test binaries
+   pass.
 6. **Platform shells** — Mac: progressively rewire existing SwiftUI views'
    data sources to UMeshCore per landed phase, UI markup untouched. Windows:
    scaffold the full WinUI3 shell as soon as Phase 1 has any usable type
