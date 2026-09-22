@@ -32,6 +32,7 @@ add_library(umeshcore STATIC
     Serialization/Json.cpp
     Serialization/SavedAnimation.cpp
     Serialization/SavedGeometry.cpp
+    Serialization/SavedSceneImage.cpp
     Serialization/SavedSkeleton.cpp
 )
 

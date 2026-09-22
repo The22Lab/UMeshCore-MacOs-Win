@@ -711,11 +711,47 @@ Special-case validation needs, carried over into each phase's own tests:
    with and without tangents, a stepped payload staying Hold even when the
    file says Bezier, clip/track/event round trips, constraint setup values
    keyed by Swift's rawValue spellings, and the bone-carries-its-clip case
-   that closed the previous increment's deferral. All 27 test binaries pass.
+   that closed the previous increment's deferral. All 28 test binaries pass.
 
-   **Not yet started**: `SavedMesh`/`SavedSceneImage`/`SavedSkin` JSON
-   conversions (bucket 1's remaining pieces); the bucket-2 types with no
-   UMeshCore port yet (`TextureAsset`, `HierarchyItem`, `NamedAnimation`,
+   `Serialization/SavedSceneImage.h/.cpp` finishes bucket 1: `SavedMesh`
+   (+ `SavedMeshBindPose`/`SavedVertexBoneWeight`/
+   `SavedBoneInverseBindMatrix`), `SavedSceneImage`
+   (+ `SavedBoneImageBinding`/`SavedTransformAnimationSpace`) and
+   `SavedSkin`. Three behaviors worth recording:
+   - `meshFromJson` reproduces the LOAD-TIME REPAIR PASS, not just field
+     mapping: Swift runs `restoredMeshRaw().repairedIfInvalid().mesh` with
+     the raw build ending in `.sanitizedSkinningData()`, and the Swift
+     comment says why -- a project written before the mesh kernel existed
+     can carry a triangle list covering only part of its silhouette, that
+     bad list was persisted, and reopening the file brought the holes back.
+     Both methods already existed on this port's `Mesh`, so the same two
+     steps run here in the same order. A visible consequence, asserted in
+     the tests rather than left implicit: an old skinning-free mesh does
+     NOT come back with empty `bindVertices`/`vertexBoneWeights` -- the
+     sanitize pass normalizes both to one entry per vertex, in both
+     implementations.
+   - A sprite's `animationTransformSpace` restores through Swift's
+     three-tier fallback: the explicitly saved space, else inferred from
+     the bone binding, else world (older files had no explicit field).
+   - `SavedSkin.attachments` is a slot-sorted ARRAY of `{slot, imageID?}`
+     records, not an object keyed by slot, for exactly the double-optional
+     reason this port's own `SlotAttachments` already documents: "key
+     present, value null" (slot deliberately empty) and "key absent" (slot
+     not described) are different statements that a JSON object collapses
+     into one. This port sorts on write too, since the live map is
+     unordered and output should stay diff-stable.
+
+   Tested: `tests/SavedSceneImageTests.cpp` (8 tests) -- full mesh and
+   sprite round trips, an old-file mesh with every optional array absent
+   (including the sanitize-pass consequence above), a sprite falling back
+   on all four of its optional fields with its animation space inferred
+   from its binding, a sprite with neither binding nor space landing in
+   world, `SavedScale2`'s bare-number shorthand reaching sprite scale, a
+   malformed 2-component tint falling back to white entirely rather than
+   partially applying, and a skin proving described-but-empty and
+   not-described slots stay distinguishable across the round trip.
+
+   **Not yet started**: the bucket-2 types with no UMeshCore port yet (`TextureAsset`, `HierarchyItem`, `NamedAnimation`,
    `CameraState`); the actual `.umesh` project package encoder/decoder
    (manifest + `Assets/` directory + SHA-256 dedup) tying it all together
    as `SavedProjectDocument`; and the UMJSON document builder, which is a
