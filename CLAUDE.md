@@ -46,7 +46,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-39 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+40 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -106,7 +106,7 @@ errores reales.
 | 1 | Math + modelo de datos | ✅ Completa salvo 3 conveniencias de editor |
 | 2 | Lógica de editor (tools, gizmos, picking, undo) | ✅ Completa salvo lo bloqueado por Fase 4/5 |
 | 3 | Serialización (binario UMSH, `.umesh` nativo, UMJSON) | ✅ Completa salvo lo de Fase 5 |
-| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 7 hechas, 2 restantes (1 descartada: código muerto)** |
+| **4** | **Capa de geometría de render compartida** | **🔨 En curso — 8 hechas, 1 restante (1 descartada: código muerto)** |
 | 5 | Scene compositing, luces, física secundaria, export | ⬜ No empezada |
 | 6a | Migrar la app Mac a consumir UMeshCore | ⬜ No empezada |
 | 6b | Shell Windows (WinUI 3 + DirectX) | ⬜ No empezada |
@@ -403,11 +403,37 @@ aditivo se escala por alfa porque se suma a la **superficie**, que solo
 existe donde hay alfa — plano, encendería el margen transparente de cada
 sprite).
 
+### Pieza 8 — hecha
+
+**`Render/SceneRenderBudget.h/.cpp`** ← `Render/SceneRenderBudget.swift`
+(174 L). 10 tests.
+
+La escalera de resolución: el cap **se mide**, no se elige. Un cap fijo hay
+que elegirlo para la peor máquina y el set más pesado, y entonces está mal
+para todas las demás combinaciones.
+
+Se porta aunque el header Swift justifique la escalera con "Scene compone
+en CPU": los dos fallos que evita son propiedades de **la escalera**, no
+del rasterizador, y dos shells inventando la suya darían al mismo artista
+dos parpadeos distintos en dos máquinas. Lo único que merece revisarse por
+backend es el tiempo objetivo — y es una constante nombrada, no una
+suposición escondida.
+
+- **Oscilación**: se sube prediciendo el escalón de arriba (el coste va con
+  los píxeles, y los píxeles con el cuadrado de la escala), no con un
+  umbral. El test reproduce el ejemplo del header — 15 ms a media escala
+  contra 33 ms "parece sitio de sobra"— y exige que el escalón no se mueva
+  en 600 frames.
+- **Trinquete**: un frame catastrófico no deja el canvas blando el resto de
+  la sesión; en cuanto deja de haber motivo, vuelve arriba de golpe.
+
+`FrameCostMeter` toma la **mediana**, no la media: un frame de 80 ms porque
+la app arrancaba arrastra una media de seis frames y cuesta un escalón.
+
 ### Pendiente, en orden de dependencia
 
 | # | Portar | Referencia Swift | L | Notas |
 |---|---|---|---|---|
-| 8 | Presupuesto de frame | `Render/SceneRenderBudget.swift` | 174 | |
 | 9 | Shader math de referencia | `Render/SceneGPU/SceneShaders.metal` | 1022 | Autorar **una vez** en C++ y transcribir a MSL y HLSL con cross-check numérico (ROADMAP Riesgo #5). |
 
 ### Qué NO portar de `Render/`

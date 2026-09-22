@@ -1341,8 +1341,43 @@ Special-case validation needs, carried over into each phase's own tests:
    hole, and bilinear sampling being exact on a linear field. All 39 test
    binaries pass.
 
-   **Not yet started**: the frame budget and the reference shader math (and
-   the Metal/DirectX backends themselves, which are Phase 6).
+   `Render/SceneRenderBudget.h/.cpp` ports
+   `Render/SceneRenderBudget.swift`: the resolution ladder, where the pixel
+   cap is MEASURED rather than chosen. A fixed cap has to be picked for the
+   worst machine and the heaviest set, which makes it wrong for every other
+   combination -- too low and a fast machine shows a soft picture it could
+   have drawn sharp, too high and a slow one drops half its frames while
+   the artist orbits.
+
+   It is ported even though the Swift header justifies the ladder with
+   "Scene composites on the CPU", a premise the GPU path this phase targets
+   changes. The two failure modes the ladder exists to avoid are properties
+   of the LADDER, not of the rasterizer: oscillation (fixed by PREDICTING
+   the rung above -- cost goes as pixels, pixels as the square of the scale
+   -- and by requiring the headroom to have lasted eight frames) and
+   ratcheting (fixed by returning to the top the moment the reason for
+   being down goes away). Two shells each inventing their own would give
+   the same artist two different pulsing behaviours on two machines. The
+   one number worth revisiting per backend is the target frame time, and it
+   is a named constant rather than a hidden assumption.
+
+   Tested: `tests/SceneRenderBudgetTests.cpp` (10 tests). The oscillation
+   test is the Swift header's own worked example turned into a scenario: a
+   machine measuring 15 ms at half size against a 33 ms budget, which a
+   naive "climb when under 60% of target" reads as plenty of room -- it
+   climbs, takes 34 ms, is dropped back, and repeats. Six hundred frames of
+   that machine leave the rung where it started and never accumulate credit
+   towards a climb that would be undone. The rest: stepping down one rung
+   at a time however catastrophic the frame, a still canvas going straight
+   back to the top, a transient dropping two rungs and the ladder walking
+   back up in two eight-frame climbs, a machine settling on the highest
+   rung that actually fits, a single expensive frame spending the streak,
+   and `FrameCostMeter` taking the median rather than the mean (one 80 ms
+   launch frame drags a six-frame mean most of the way to the target and
+   would cost a rung). All 40 test binaries pass.
+
+   **Not yet started**: the reference shader math (and the Metal/DirectX
+   backends themselves, which are Phase 6).
 5. **Scene compositing / lighting / physics secondary motion / export** —
    mostly wiring Phase 1 (physics) + Phase 4 (lighting/geometry) together;
    own new scope is export orchestration (PNG sequence/video/texture atlas)
