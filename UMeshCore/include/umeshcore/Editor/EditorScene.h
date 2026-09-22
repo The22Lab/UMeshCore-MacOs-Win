@@ -80,6 +80,17 @@ public:
     // before the mouse-up commit writes `SceneImage::position` for real ---
     std::unordered_map<Uuid, Vec2, UuidHash> previewPositions;
 
+    // The live preview line `BoneTool` draws while a new bone is being
+    // dragged out (from empty canvas, or chained off an existing bone's
+    // tip) -- both nullopt when nothing is being created. Presentation-only
+    // state, matching `SceneManager.setBoneCreationPreview`.
+    std::optional<Vec2> boneCreationPreviewStart;
+    std::optional<Vec2> boneCreationPreviewEnd;
+    void setBoneCreationPreview(std::optional<Vec2> start, std::optional<Vec2> end) {
+        boneCreationPreviewStart = start;
+        boneCreationPreviewEnd = end;
+    }
+
     // --- Undo/redo ---
     UndoRedoManager undoRedo;
 
@@ -311,6 +322,20 @@ public:
         }
     }
 
+    void setBoneSkew(Uuid id, Vec2 skew) {
+        const Bone* existing = skeleton.bone(id);
+        if (existing == nullptr) return;
+        Bone bone = *existing;
+        bone.localTransform.skew = skew;
+        if (!isAnimationEditingEnabled && !isPoseMode) bone.baseTransform.skew = skew;
+        skeleton.setBone(bone);
+        if (isAnimationEditingEnabled && !isPoseMode) {
+            commitKeyframe(id, AnimationTrackProperty::Shear, ShearValue{bone.localTransform.skew});
+        } else {
+            applyAnimationsNow();
+        }
+    }
+
     void setBoneLength(Uuid id, float length_) {
         const Bone* existing = skeleton.bone(id);
         if (existing == nullptr) return;
@@ -338,6 +363,22 @@ public:
         } else {
             applyAnimationsNow();
         }
+    }
+
+    // Creates a new bone from `start` to `end` (world space), optionally
+    // parented to `parentID`, selects it, and returns its id. 1:1 port of
+    // `SceneManager.addBone`, minus the hierarchy-panel bookkeeping
+    // (`hierarchyItems`/`normalizeOrder`/`syncImagesToHierarchy`) that
+    // Swift's version also does -- outliner/UI-panel state, outside
+    // EditorScene's "what tools need" boundary (see this file's header).
+    Uuid addBone(Vec2 start, Vec2 end, std::optional<Uuid> parentID = std::nullopt) {
+        pushUndoState();
+        const int boneIndex = static_cast<int>(skeleton.bones().size()) + 1;
+        const std::optional<Mat4> parentMatrix = parentID.has_value() ? skeleton.worldMatrix(*parentID) : std::nullopt;
+        const Bone bone = Bone::make("Bone " + std::to_string(boneIndex), start, end, parentID, parentMatrix);
+        skeleton = skeleton.addingBone(bone);
+        selectBone(bone.id);
+        return bone.id;
     }
 
     // --- Undo/redo ---
