@@ -644,17 +644,43 @@ Special-case validation needs, carried over into each phase's own tests:
    treated as `?? []` on read (backward compatible with pre-constraint save
    files) exactly like `SavedSkeleton`'s own optionals.
 
-   Deliberately deferred, documented rather than silently dropped (see
-   `SavedSkeleton.h`'s file header): a bone's `animationClip` field is not
-   yet written or read -- animation-clip JSON conversion (`SavedAnimationClip`/
-   `Track`/`Keyframe`/`KeyframeValue`, including the tagged-union value
-   shape with its own per-case Swift quirks: `.scale`'s scalar-or-vector2
-   fallback, `.attachment`'s 0-or-1-element array instead of an optional
-   UUID, `.event`'s three independently-optional inherit-default fields) is
-   its own increment, not yet built. Every bone restored through this file
-   alone gets a fresh empty `AnimationClip`, which is exactly Swift's own
-   fallback when the field is absent -- an animation-free round trip is
-   already correct today.
+   `Serialization/SavedAnimation.h/.cpp` then closed the animation half:
+   `SavedAnimationClip`/`Track`/`Keyframe`/`KeyframeValue`,
+   `SavedAnimationEvent`, and `SavedConstraintSetupValues`, with every
+   decode fallback read off the real Swift implementations
+   (`restoredValue()`/`restoredKeyframe()`/`restoredAnimationTrack()`), not
+   inferred. `SavedKeyframeValue` is Swift's hand-rolled tagged union (a
+   `kind` string plus a bag of mutually-exclusive optional payloads), and
+   three of its cases carry real semantics this port reproduces rather than
+   "cleans up": `.scale` decodes `vector2 ?? SIMD2(repeating: scalar ?? 1)`
+   (old files wrote uniform scale as one number, and a *missing* scale is
+   neutral at 1, not 0); `.attachment` is a 0-or-1-element id ARRAY, never
+   an optional id, because "slot deliberately empty" and "no attachment key
+   at all" are different statements a JSON `null` cannot distinguish; and
+   `.event`'s three payload fields each stay independently optional end to
+   end, since absent means "inherit the event definition's default" and must
+   not decode as 0/"". An unrecognized `kind` falls back to
+   `.translate(zero)`, matching Swift's `default:` arm. Reading a keyframe
+   goes through `Keyframe`'s own constructor, so its stepped-interpolation
+   rule (flag/drawOrder/event/attachment payloads are always Hold) applies
+   on load exactly as it does everywhere else -- a file claiming otherwise
+   cannot smuggle a Bezier flag keyframe in.
+
+   This is also the first place in the port to need Swift's
+   `AnimationTrackProperty.rawValue` strings (`trackPropertyName`/
+   `trackPropertyFromName`, all 42 verified against the Swift enum
+   declaration). That does not reopen the earlier decision to key
+   `ConstraintSetupValues` by the enum rather than by a string (see
+   `Constraints/ConstraintAnimation.h`): the table lives at the
+   serialization boundary, which is exactly where a wire spelling belongs,
+   and it is a separate vocabulary from `UMeshBinaryFormat`'s numeric
+   `TrackPropertyCode` -- two formats, two encodings of the same enum,
+   neither derived from the other.
+
+   With that in place, the bone `animationClip` deferral noted in the
+   previous increment is closed: it round-trips, staying optional on the
+   wire exactly as in Swift (a bone with nothing keyed writes no clip;
+   a bone read without one gets `AnimationClip(name: bone.name)`).
 
    One more dangling-reference bug caught by the new tests, same class as
    `BinaryExporter.cpp`'s `orderedBones()` bug from the previous increment:
@@ -675,15 +701,24 @@ Special-case validation needs, carried over into each phase's own tests:
    really fires, all four constraint types + `PhysicsSettings`, an unknown
    enum string falling back correctly, a full `Skeleton` round trip
    including all four constraint arrays, and an old-shaped skeleton (no
-   constraint arrays at all) defaulting to empty. All 26 test binaries pass.
+   constraint arrays at all) defaulting to empty. Plus
+   `tests/SavedAnimationTests.cpp` (14 tests) -- all 42 property names
+   round-trip (with spot checks against Swift's literal case spellings),
+   every one of the 11 `KeyframeValue` kinds round-trips, the empty-slot
+   attachment stays an empty array, an event payload keeps its fields
+   independently optional, `.scale`'s two-level fallback fires on real
+   parsed JSON, an unknown kind falls back to translate-zero, keyframes
+   with and without tangents, a stepped payload staying Hold even when the
+   file says Bezier, clip/track/event round trips, constraint setup values
+   keyed by Swift's rawValue spellings, and the bone-carries-its-clip case
+   that closed the previous increment's deferral. All 27 test binaries pass.
 
-   **Not yet started**: `SavedMesh`/`SceneImage`/`AnimationClip`/`Skin`/
-   `AnimationEvent`/`ConstraintSetupValues` JSON conversions (bucket 1's
-   remaining pieces); the bucket-2 types with no UMeshCore port yet
-   (`TextureAsset`, `HierarchyItem`, `NamedAnimation`, `CameraState`); the
-   actual `.umesh` project package encoder/decoder (manifest + `Assets/`
-   directory + SHA-256 dedup) tying it all together as
-   `SavedProjectDocument`; and the UMJSON document builder, which is a
+   **Not yet started**: `SavedMesh`/`SavedSceneImage`/`SavedSkin` JSON
+   conversions (bucket 1's remaining pieces); the bucket-2 types with no
+   UMeshCore port yet (`TextureAsset`, `HierarchyItem`, `NamedAnimation`,
+   `CameraState`); the actual `.umesh` project package encoder/decoder
+   (manifest + `Assets/` directory + SHA-256 dedup) tying it all together
+   as `SavedProjectDocument`; and the UMJSON document builder, which is a
    fully separate model from `Saved*` (see the JSON-foundation entry
    above) and needs its own pass once the rig/mesh/animation JSON pieces
    above exist to draw from.

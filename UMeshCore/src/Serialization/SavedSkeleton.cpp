@@ -1,5 +1,6 @@
 #include "umeshcore/Serialization/SavedSkeleton.h"
 
+#include "umeshcore/Serialization/SavedAnimation.h"
 #include "umeshcore/Serialization/SavedGeometry.h"
 
 namespace umeshcore {
@@ -39,7 +40,9 @@ JsonValue toJson(const Bone& bone) {
 
     j.set("length", JsonValue::makeNumber(bone.length));
     if (bone.color.has_value()) j.set("color", toJson(*bone.color));
-    // animationClip: deferred -- see this file's header.
+    // Optional on the wire, like Swift's own `SavedAnimationClip?`: a bone
+    // with nothing keyed writes no clip at all.
+    if (!bone.animationClip.tracks().empty()) j.set("animationClip", toJson(bone.animationClip));
     return j;
 }
 
@@ -70,7 +73,8 @@ Bone boneFromJson(const JsonValue& j) {
     bone.length = j.find("length")->asFloat();
     const JsonValue* color = j.find("color");
     if (color != nullptr) bone.color = vec4FromJson(*color);
-    bone.animationClip = AnimationClip(bone.name); // see this file's header.
+    const JsonValue* animationClip = j.find("animationClip");
+    bone.animationClip = animationClip != nullptr ? animationClipFromJson(*animationClip) : AnimationClip(bone.name);
     return bone;
 }
 
