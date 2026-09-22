@@ -841,10 +841,58 @@ Special-case validation needs, carried over into each phase's own tests:
    and -- end to end this time -- an unmodelled section surviving a real
    save/load cycle. All 30 test binaries pass.
 
-   **Not yet started**: the bucket-2 types with no UMeshCore port yet
-   (`TextureAsset` beyond `AssetRecord`, `HierarchyItem`, `NamedAnimation`,
-   `CameraState`), which are what `ProjectDocument::unrecognized` is
-   currently holding verbatim; and the UMJSON document builder, which is a
+   **Bucket 2: closed.** The types the manifest needed that had no
+   UMeshCore counterpart are ported, so they no longer live in
+   `ProjectDocument::unrecognized` as opaque JSON:
+   - `Model/HierarchyItem.h` -- the outliner tree (`HierarchyModels.swift`).
+     Authored data, not a rendering of the skeleton, which is why it belongs
+     in the core; the panel that DRAWS it stays per-platform.
+   - `Animation/AnimationLibrary.h/.cpp` -- `NamedAnimation` plus the
+     library itself (`Data/AnimationLibrary.swift`), which ROADMAP listed as
+     an outstanding Phase 1 item. Reached here because the manifest
+     persists it, and a manifest that could not round-trip the library
+     would lose an artist's other animations on save. Takes an
+     `EditorScene&` where Swift takes `SceneManager`. Two non-obvious rules
+     the Swift comments call out are kept and tested directly: `restore`
+     deliberately does NOT snapshot the live clips first (the project was
+     just loaded, so those clips ARE the active animation's, and
+     snapshotting would overwrite the file's contents with a copy of one of
+     its own entries), and `switchTo` saves the outgoing animation even
+     when the target is already active, then returns without reloading, so
+     live clips are never overwritten with a stale snapshot.
+   - `CameraState` already existed; it just needed its JSON.
+
+   `Serialization/SavedEditorState.h/.cpp` carries the hierarchy and camera
+   conversions. Swift's `SavedEditorState` itself is deliberately NOT
+   ported, and the header says why rather than leaving it to inference: it
+   is a flat bag of `AppState` UI scalars (timeline zoom, snap and onion-
+   skin toggles, which track filter is selected, soft-selection sliders),
+   which is platform-shell state under this port's standing rule. It still
+   survives a save, because `unrecognized` carries the whole `editorState`
+   object through untouched.
+
+   `ProjectDocument` gained `hierarchyItems`, `camera`, `animations` and
+   `activeAnimationID` as real fields. They are left for the caller to fill
+   rather than read off `EditorScene`, because they live OUTSIDE the scene
+   here exactly as they do in Swift (the camera and the animation library
+   belong to `AppState`, not `SceneManager`) -- and Swift's own
+   `AppState.restore` has the same shape: restore the scene, then the
+   library, the camera and the rest separately. What is left in
+   `unrecognized` today is just `editorState` and the Phase 5
+   Scene-compositing sections.
+
+   Tested: `tests/AnimationLibraryTests.cpp` (10 tests) -- snapshot
+   capturing every clip and the longest duration across bone/sprite/scene,
+   switching saving the outgoing edits and loading the target, switching to
+   the ALREADY-ACTIVE animation saving without reloading, `restore` not
+   snapshotting over what it was given, a dangling `activeID` selecting
+   nothing, rename/remove, and JSON round trips for `NamedAnimation`,
+   `HierarchyItem` (including nesting and an unknown type falling back to
+   image) and `CameraState`. `ProjectDocumentTests` gained a case asserting
+   these four sections now round-trip as real values with `unrecognized`
+   empty. All 31 test binaries pass.
+
+   **Not yet started**: the UMJSON document builder, which is a
    fully separate model from `Saved*` (see the JSON-foundation entry
    above) and needs its own pass once the rig/mesh/animation JSON pieces
    above exist to draw from.

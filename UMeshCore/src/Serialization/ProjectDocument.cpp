@@ -5,6 +5,7 @@
 #include <unordered_set>
 
 #include "umeshcore/Serialization/SavedAnimation.h"
+#include "umeshcore/Serialization/SavedEditorState.h"
 #include "umeshcore/Serialization/SavedGeometry.h"
 #include "umeshcore/Serialization/SavedSceneImage.h"
 #include "umeshcore/Serialization/SavedSkeleton.h"
@@ -15,25 +16,29 @@ namespace {
 
 // Every top-level key this port models. Anything else a file carries is
 // preserved verbatim in `ProjectDocument::unrecognized` -- see the header.
-// NOTE: `camera` (`SavedCameraState`, the 2D editor viewport camera) is
-// deliberately NOT listed -- it is not modelled here yet, so it must fall
-// through to `unrecognized` and be written back untouched rather than
-// dropped.
-constexpr std::array<const char*, 14> kKnownKeys{
+// Everything NOT listed here falls through to `unrecognized` and is
+// written back untouched rather than dropped -- today that is
+// `editorState` (platform-shell UI scalars, see SavedEditorState.h) and
+// the Phase 5 Scene-compositing sections.
+constexpr std::array<const char*, 18> kKnownKeys{
     "version",
     "currentFrame",
     "playbackLoops",
     "playbackStartFrame",
     "playbackEndFrame",
+    "camera",
     "assets",
     "images",
     "skeleton",
+    "hierarchyItems",
     "sceneAnimationClip",
     "projectFramesPerSecond",
     "authoredDrawOrder",
     "skins",
     "animationEvents",
     "activeSkinID",
+    "animations",
+    "activeAnimationID",
 };
 
 bool isKnownKey(const std::string& key) {
@@ -106,6 +111,21 @@ JsonValue toJson(const ProjectDocument& document) {
     j.set("images", JsonValue::makeArray(std::move(images)));
 
     j.set("skeleton", toJson(document.skeleton));
+    j.set("camera", toJson(document.camera));
+
+    JsonValue::Array hierarchy;
+    hierarchy.reserve(document.hierarchyItems.size());
+    for (const HierarchyItem& item : document.hierarchyItems) hierarchy.push_back(toJson(item));
+    j.set("hierarchyItems", JsonValue::makeArray(std::move(hierarchy)));
+
+    JsonValue::Array animations;
+    animations.reserve(document.animations.size());
+    for (const NamedAnimation& animation : document.animations) animations.push_back(toJson(animation));
+    j.set("animations", JsonValue::makeArray(std::move(animations)));
+
+    if (document.activeAnimationID.has_value()) {
+        j.set("activeAnimationID", toJson(*document.activeAnimationID));
+    }
 
     if (document.sceneAnimationClip.has_value()) {
         j.set("sceneAnimationClip", toJson(*document.sceneAnimationClip));
@@ -176,6 +196,28 @@ ProjectDocument projectDocumentFromJson(const JsonValue& j) {
     const JsonValue* skeleton = j.find("skeleton");
     if (skeleton != nullptr) document.skeleton = skeletonFromJson(*skeleton);
 
+    const JsonValue* camera = j.find("camera");
+    if (camera != nullptr && !camera->isNull()) document.camera = cameraStateFromJson(*camera);
+
+    const JsonValue* hierarchy = j.find("hierarchyItems");
+    if (hierarchy != nullptr && !hierarchy->isNull()) {
+        for (const JsonValue& item : hierarchy->asArray()) {
+            document.hierarchyItems.push_back(hierarchyItemFromJson(item));
+        }
+    }
+
+    const JsonValue* animations = j.find("animations");
+    if (animations != nullptr && !animations->isNull()) {
+        for (const JsonValue& animation : animations->asArray()) {
+            document.animations.push_back(namedAnimationFromJson(animation));
+        }
+    }
+
+    const JsonValue* activeAnimationID = j.find("activeAnimationID");
+    if (activeAnimationID != nullptr && !activeAnimationID->isNull()) {
+        document.activeAnimationID = uuidFromJson(*activeAnimationID);
+    }
+
     const JsonValue* sceneAnimationClip = j.find("sceneAnimationClip");
     if (sceneAnimationClip != nullptr && !sceneAnimationClip->isNull()) {
         document.sceneAnimationClip = animationClipFromJson(*sceneAnimationClip);
@@ -236,6 +278,13 @@ ProjectDocument projectDocumentFrom(const EditorScene& scene, std::vector<AssetR
     // playbackLoops / projectFramesPerSecond / authoredDrawOrder are not
     // modelled on EditorScene; they keep their defaults here. See the
     // header -- a document READ from a file carries them through untouched.
+    //
+    // `hierarchyItems`, `camera` and `animations`/`activeAnimationID` are
+    // likewise left for the caller to fill, because they live OUTSIDE the
+    // scene here just as they do in Swift (the camera and the animation
+    // library belong to `AppState`, not `SceneManager`). Swift's own
+    // `AppState.restore` has the same shape: restore the scene, then the
+    // library, the camera and the rest separately.
     return document;
 }
 

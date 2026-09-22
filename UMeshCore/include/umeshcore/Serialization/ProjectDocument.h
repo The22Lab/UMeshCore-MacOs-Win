@@ -12,11 +12,11 @@
 // writing it back does not silently drop them.
 //
 // The same reasoning, taken further, motivates `unrecognized`: any
-// top-level key this port does not model yet -- `hierarchyItems`,
-// `editorState`, `animations` (the `NamedAnimation` library),
-// `sceneCompositions`/`selectedSceneCompositionID`/`sceneViewCamera`
-// (Phase 5's Scene-compositing model), `activeAnimationID` -- is kept
-// VERBATIM on read and written back out unchanged. Swift needs no such
+// top-level key this port does not model yet -- today `editorState` (a bag
+// of platform-shell UI scalars this port deliberately does not own, see
+// `SavedEditorState.h`) and the Phase 5 Scene-compositing sections
+// (`sceneCompositions`/`selectedSceneCompositionID`/`sceneViewCamera`) --
+// is kept VERBATIM on read and written back out unchanged. Swift needs no such
 // mechanism, because its `Codable` models every field; this port models a
 // growing subset, and without this a load/save cycle through UMeshCore
 // would destroy a real project's Scene mode and animation library. A
@@ -34,9 +34,12 @@
 
 #include "umeshcore/Animation/AnimationClip.h"
 #include "umeshcore/Animation/AnimationEvent.h"
+#include "umeshcore/Animation/AnimationLibrary.h"
 #include "umeshcore/Constraints/ConstraintAnimation.h"
 #include "umeshcore/Core/Uuid.h"
+#include "umeshcore/Editor/CameraState.h"
 #include "umeshcore/Editor/EditorScene.h"
+#include "umeshcore/Model/HierarchyItem.h"
 #include "umeshcore/Model/SceneImage.h"
 #include "umeshcore/Model/Skeleton.h"
 #include "umeshcore/Model/Skin.h"
@@ -57,6 +60,8 @@ struct ProjectDocument {
     std::vector<AssetRecord> assets;
     std::vector<SceneImage> images;
     Skeleton skeleton;
+    std::vector<HierarchyItem> hierarchyItems;
+    CameraState camera;
 
     // Optional in the file (absent in projects saved before each landed).
     std::optional<AnimationClip> sceneAnimationClip;
@@ -66,6 +71,8 @@ struct ProjectDocument {
     std::vector<AnimationEvent> animationEvents;
     std::optional<Uuid> activeSkinID;
     std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> constraintSetupValues;
+    std::vector<NamedAnimation> animations;
+    std::optional<Uuid> activeAnimationID;
 
     // Top-level keys this port does not model yet, kept verbatim so a
     // round trip does not destroy them. See this file's header.

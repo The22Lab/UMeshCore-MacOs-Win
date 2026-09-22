@@ -42,6 +42,7 @@
 
 #include "umeshcore/Animation/AnimationClip.h"
 #include "umeshcore/Animation/AnimationEvent.h"
+#include "umeshcore/Animation/AnimationLibrary.h"
 #include "umeshcore/Animation/AnimationTrackProperty.h"
 #include "umeshcore/Animation/Keyframe.h"
 #include "umeshcore/Constraints/ConstraintAnimation.h"
@@ -81,5 +82,12 @@ AnimationEvent animationEventFromJson(const JsonValue& j);
 JsonValue constraintSetupValuesToJson(const Uuid& constraintID, const ConstraintSetupValues& values);
 Uuid constraintSetupValuesIDFromJson(const JsonValue& j);
 ConstraintSetupValues constraintSetupValuesFromJson(const JsonValue& j);
+
+// `SavedNamedAnimation` -- one entry of the animation library. Its two
+// `Uuid -> AnimationClip` maps become arrays of `SavedNamedAnimationClip`
+// records (`{targetID, clip}`), sorted on write, for the same JSON-has-no-
+// UUID-key reason as above.
+JsonValue toJson(const NamedAnimation& animation);
+NamedAnimation namedAnimationFromJson(const JsonValue& j);
 
 } // namespace umeshcore

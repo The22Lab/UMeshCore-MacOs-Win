@@ -8,6 +8,7 @@
 add_library(umeshcore STATIC
     Version.cpp
     Animation/AnimationClip.cpp
+    Animation/AnimationLibrary.cpp
     Animation/SceneAnimator.cpp
     Model/Bone.cpp
     Constraints/ConstraintPropagation.cpp
@@ -34,6 +35,7 @@ add_library(umeshcore STATIC
     Serialization/ProjectPackage.cpp
     Serialization/Sha256.cpp
     Serialization/SavedAnimation.cpp
+    Serialization/SavedEditorState.cpp
     Serialization/SavedGeometry.cpp
     Serialization/SavedSceneImage.cpp
     Serialization/SavedSkeleton.cpp

@@ -1,5 +1,6 @@
 #include "umeshcore/Serialization/SavedAnimation.h"
 
+#include <algorithm>
 #include <array>
 #include <unordered_map>
 #include <variant>
@@ -363,6 +364,90 @@ JsonValue constraintSetupValuesToJson(const Uuid& constraintID, const Constraint
 }
 
 Uuid constraintSetupValuesIDFromJson(const JsonValue& j) { return uuidFromJson(*j.find("constraintID")); }
+
+namespace {
+
+// A `Uuid -> AnimationClip` map as a sorted array of `{targetID, clip}`
+// records (`SavedNamedAnimationClip`).
+JsonValue clipMapToJson(const std::unordered_map<Uuid, AnimationClip, UuidHash>& clips) {
+    std::vector<std::pair<Uuid, const AnimationClip*>> sorted;
+    sorted.reserve(clips.size());
+    for (const auto& [targetID, clip] : clips) sorted.emplace_back(targetID, &clip);
+    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
+        return a.first.toString() < b.first.toString();
+    });
+
+    JsonValue::Array out;
+    out.reserve(sorted.size());
+    for (const auto& [targetID, clip] : sorted) {
+        JsonValue entry = JsonValue::makeObject();
+        entry.set("targetID", toJson(targetID));
+        entry.set("clip", toJson(*clip));
+        out.push_back(entry);
+    }
+    return JsonValue::makeArray(std::move(out));
+}
+
+std::unordered_map<Uuid, AnimationClip, UuidHash> clipMapFromJson(const JsonValue* j) {
+    std::unordered_map<Uuid, AnimationClip, UuidHash> clips;
+    if (j == nullptr || j->isNull()) return clips;
+    for (const JsonValue& entry : j->asArray()) {
+        clips[uuidFromJson(*entry.find("targetID"))] = animationClipFromJson(*entry.find("clip"));
+    }
+    return clips;
+}
+
+} // namespace
+
+JsonValue toJson(const NamedAnimation& animation) {
+    JsonValue j = JsonValue::makeObject();
+    j.set("id", toJson(animation.id));
+    j.set("name", JsonValue::makeString(animation.name));
+    j.set("boneClips", clipMapToJson(animation.boneClips));
+    j.set("imageClips", clipMapToJson(animation.imageClips));
+    j.set("sceneClip", toJson(animation.sceneClip));
+    j.set("duration", JsonValue::makeNumber(animation.duration));
+
+    std::vector<std::pair<Uuid, const ConstraintSetupValues*>> sorted;
+    sorted.reserve(animation.constraintSetupValues.size());
+    for (const auto& [constraintID, values] : animation.constraintSetupValues) {
+        sorted.emplace_back(constraintID, &values);
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
+        return a.first.toString() < b.first.toString();
+    });
+    JsonValue::Array setup;
+    setup.reserve(sorted.size());
+    for (const auto& [constraintID, values] : sorted) {
+        setup.push_back(constraintSetupValuesToJson(constraintID, *values));
+    }
+    j.set("constraintSetupValues", JsonValue::makeArray(std::move(setup)));
+
+    return j;
+}
+
+NamedAnimation namedAnimationFromJson(const JsonValue& j) {
+    NamedAnimation animation;
+    animation.id = uuidFromJson(*j.find("id"));
+    animation.name = j.find("name")->asString();
+    animation.boneClips = clipMapFromJson(j.find("boneClips"));
+    animation.imageClips = clipMapFromJson(j.find("imageClips"));
+
+    const JsonValue* sceneClip = j.find("sceneClip");
+    if (sceneClip != nullptr && !sceneClip->isNull()) animation.sceneClip = animationClipFromJson(*sceneClip);
+
+    const JsonValue* setup = j.find("constraintSetupValues");
+    if (setup != nullptr && !setup->isNull()) {
+        for (const JsonValue& entry : setup->asArray()) {
+            animation.constraintSetupValues[constraintSetupValuesIDFromJson(entry)] =
+                constraintSetupValuesFromJson(entry);
+        }
+    }
+
+    const JsonValue* duration = j.find("duration");
+    if (duration != nullptr) animation.duration = duration->asInt();
+    return animation;
+}
 
 ConstraintSetupValues constraintSetupValuesFromJson(const JsonValue& j) {
     ConstraintSetupValues values;

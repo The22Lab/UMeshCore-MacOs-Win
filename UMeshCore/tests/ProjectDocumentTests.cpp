@@ -111,26 +111,57 @@ static void testAlbedoRoleIsOmittedFromTheFile() {
 }
 
 static void testUnmodelledKeysSurviveTheRoundTrip() {
-    // A real project file carries sections this port does not model yet.
-    // They must come back out byte-for-byte, not be dropped.
+    // A real project file carries sections this port does not model.
+    // They must come back out intact, not be dropped. Today that is
+    // `editorState` (platform-shell UI scalars, deliberately not owned
+    // here) and the Phase 5 Scene-compositing sections.
     ProjectDocument seed;
     JsonValue j = toJson(seed);
-    j.set("hierarchyItems", JsonValue::parse("[{\"name\":\"Root\",\"order\":3}]"));
     j.set("editorState", JsonValue::parse("{\"timelineZoomScale\":1.75}"));
     j.set("sceneCompositions", JsonValue::parse("[{\"name\":\"Shot 1\",\"fps\":24}]"));
-    j.set("camera", JsonValue::parse("{\"zoom\":2.5,\"rotation\":0.25}"));
-    j.set("animations", JsonValue::parse("[{\"name\":\"Walk\"}]"));
+    j.set("sceneViewCamera", JsonValue::parse("{\"distance\":500}"));
 
     const ProjectDocument document = projectDocumentFromJson(j);
-    UM_CHECK(document.unrecognized.size() == 5);
+    UM_CHECK(document.unrecognized.size() == 3);
 
     const JsonValue written = toJson(document);
-    UM_CHECK(written.find("hierarchyItems") != nullptr);
-    UM_CHECK(written.find("hierarchyItems")->asArray()[0].find("order")->asInt() == 3);
     UM_CHECK_NEAR(written.find("editorState")->find("timelineZoomScale")->asDouble(), 1.75, 1e-9);
     UM_CHECK(written.find("sceneCompositions")->asArray()[0].find("name")->asString() == "Shot 1");
-    UM_CHECK_NEAR(written.find("camera")->find("zoom")->asDouble(), 2.5, 1e-9);
-    UM_CHECK(written.find("animations")->asArray()[0].find("name")->asString() == "Walk");
+    UM_CHECK_NEAR(written.find("sceneViewCamera")->find("distance")->asDouble(), 500.0, 1e-9);
+}
+
+static void testHierarchyCameraAndAnimationsAreModelledNotPreserved() {
+    // These four left `unrecognized` once their types were ported; they
+    // must now round-trip as real values, not as opaque JSON.
+    ProjectDocument document;
+
+    HierarchyItem item;
+    item.name = "Body";
+    item.type = HierarchyItem::ItemType::Bone;
+    item.order = 4;
+    document.hierarchyItems.push_back(item);
+
+    document.camera.origin = Vec2(10, 20);
+    document.camera.zoom = 3.0f;
+
+    NamedAnimation animation;
+    animation.name = "Walk";
+    animation.duration = 24;
+    document.animations.push_back(animation);
+    document.activeAnimationID = animation.id;
+
+    const ProjectDocument back = projectDocumentFromJson(JsonValue::parse(toJson(document).dump()));
+
+    UM_CHECK(back.unrecognized.empty());
+    UM_CHECK(back.hierarchyItems.size() == 1);
+    UM_CHECK(back.hierarchyItems[0].name == "Body");
+    UM_CHECK(back.hierarchyItems[0].type == HierarchyItem::ItemType::Bone);
+    UM_CHECK(back.hierarchyItems[0].order == 4);
+    UM_CHECK_NEAR(back.camera.origin.x, 10.0, 1e-6);
+    UM_CHECK_NEAR(back.camera.zoom, 3.0, 1e-6);
+    UM_CHECK(back.animations.size() == 1 && back.animations[0].name == "Walk");
+    UM_CHECK(back.animations[0].duration == 24);
+    UM_CHECK(back.activeAnimationID.has_value() && *back.activeAnimationID == animation.id);
 }
 
 static void testModelledKeysAreNotTreatedAsUnrecognized() {
@@ -199,6 +230,7 @@ UM_TEST_MAIN_BEGIN()
     testDocumentRoundTripsThroughJson();
     testAlbedoRoleIsOmittedFromTheFile();
     testUnmodelledKeysSurviveTheRoundTrip();
+    testHierarchyCameraAndAnimationsAreModelledNotPreserved();
     testModelledKeysAreNotTreatedAsUnrecognized();
     testApplyRestoresSceneAndClearsTransientState();
     testApplyWithoutSceneClipFallsBackToAnEmptyOne();
