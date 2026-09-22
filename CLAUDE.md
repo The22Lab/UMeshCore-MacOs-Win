@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-49 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+50 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -172,13 +172,24 @@ textura **cargada**, y no hay pipeline de decodificación de imágenes.
   los dos subsistemas está modelado en `EditorScene`.
 - `solveRigPose` / `rigPose(atFrame:)` de `SceneAnimator` — Fase 5.
 
-**Deuda marcada, segunda mordida hecha** (Riesgo #6 del ROADMAP):
-`Editor/SceneGizmoState.h` extrae la **forma** del gizmo de Scene del
-cuerpo de vista SwiftUI: la basis por herramienta, la cámara estabilizada,
-la escala única, los ejes/anillos/planos proyectados. Es de donde parten
-**los dos** consumidores (hit-test en CPU y layout de GPU), que es
-justamente lo que el Swift dice que evita que discrepen. Falta la
-matemática de arrastre.
+**Deuda marcada, el gizmo de Scene ya fuera de la vista** (Riesgo #6):
+`Editor/SceneGizmoState.h` extrae la **forma** (basis por herramienta,
+cámara estabilizada, escala única, ejes/anillos/planos proyectados) y
+`Editor/SceneGizmoDrag.h` el **hit-test y el arrastre de una capa**. Toda
+medida se hace donde vive la pregunta: rayo-eje para trasladar, rayo-plano
+para los handles de plano, ángulo en el plano del propio anillo para rotar.
+Los tests reproducen el método de pantalla que sustituyen y lo muestran
+discrepando.
+
+Dos cosas documentadas y **no** arregladas: la cámara estabilizada
+magnifica el manipulador (los 19,5 px nominales dibujan 154), y el handle
+**central** (free-move / escala uniforme) es **inalcanzable** mientras haya
+un eje dibujado — los ejes empiezan *en* el origen, así que su distancia
+nunca es mayor, y el empate lo gana el eje. Medido: 2618 agarres alrededor
+del origen, **cero** al centro.
+
+Falta: el arrastre de **luces** y de **cámara** (`mutateLight`,
+`mutateCamera`), y `TimelineView.swift` entero (4326 L).
 `ringFrame` y las constantes de geometría que el mesh builder del gizmo
 necesita ya están extraídas a `Render/SceneGizmoLayout.h` (Fase 4, pieza
 5). Lo demás sigue dentro de las vistas:

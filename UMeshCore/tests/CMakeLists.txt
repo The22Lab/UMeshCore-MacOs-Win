@@ -98,3 +98,4 @@ add_executable(HeaderSelfContainmentTests
 target_link_libraries(HeaderSelfContainmentTests PRIVATE umeshcore)
 add_test(NAME HeaderSelfContainmentTests COMMAND HeaderSelfContainmentTests)
 umeshcore_add_test(SceneGizmoStateTests SceneGizmoStateTests.cpp)
+umeshcore_add_test(SceneGizmoDragTests SceneGizmoDragTests.cpp)
