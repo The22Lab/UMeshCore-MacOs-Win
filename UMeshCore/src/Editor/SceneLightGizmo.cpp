@@ -219,7 +219,13 @@ SceneGizmoLayout::LightDiagram lightDiagram(
     const std::optional<SceneLightHandle>& highlighted) {
     SceneGizmoLayout::LightDiagram diagram;
     diagram.centre = geometry.centre;
-    diagram.tint = Vec4(light.color.x, light.color.y, light.color.z, 1.0f);
+    // A disabled light's diagram is flattened to WHITE, and the mesh builder
+    // then dims it by `isEnabled`. The two together are the "off" look --
+    // Swift's mesh builder calls its dim "the same reading `drawLight` gave
+    // it by mixing `light.colour` down towards white". Keeping the hue here
+    // would draw an off light as a faded version of its own colour instead.
+    diagram.tint = light.isEnabled ? Vec4(light.color.x, light.color.y, light.color.z, 1.0f)
+                                   : Vec4(1.0f, 1.0f, 1.0f, 1.0f);
     diagram.isEnabled = light.isEnabled;
     diagram.viewAxis = geometry.viewAxis;
     diagram.influenceRadius = geometry.influenceRadius;

@@ -429,7 +429,35 @@ static void testALightHasNoSizeToScaleAndNoPlaneToSlant() {
     }
 }
 
+static void testADisabledLightsDiagramIsFlattenedToWhite() {
+    // Swift's `lightDiagramLayout`: an enabled light is drawn in its own
+    // colour, a disabled one in WHITE -- and the mesh builder then dims it.
+    // The port used to keep the hue for both, which drew an off light as a
+    // faded version of its own colour. This test is what fails if it does
+    // again.
+    const SceneProjection camera = angledCamera();
+    SceneLight light = spotLight();
+    light.color = Vec3(1.0f, 0.3f, 0.1f);
+
+    light.isEnabled = true;
+    const auto on = lightDiagram(lightWorldGeometry(light, camera), light, std::nullopt);
+    UM_CHECK(on.isEnabled);
+    UM_CHECK(on.tint.x == 1.0f && on.tint.y == 0.3f && on.tint.z == 0.1f && on.tint.w == 1.0f);
+
+    light.isEnabled = false;
+    const auto off = lightDiagram(lightWorldGeometry(light, camera), light, std::nullopt);
+    UM_CHECK(!off.isEnabled);
+    UM_CHECK(off.tint.x == 1.0f && off.tint.y == 1.0f && off.tint.z == 1.0f && off.tint.w == 1.0f);
+
+    // Only the colour changes: switching a light off does not move a
+    // single point of its diagram.
+    UM_CHECK(on.handles.size() == off.handles.size());
+    UM_CHECK(on.outerArc.size() == off.outerArc.size());
+    UM_CHECK(on.influenceRadius == off.influenceRadius);
+}
+
 UM_TEST_MAIN_BEGIN()
+    testADisabledLightsDiagramIsFlattenedToWhite();
     testWhichHandlesALightHasAndInWhatOrder();
     testAHandleExistsOnlyWhereItMeansSomething();
     testTheSoftnessHandleCannotHideUnderTheRadiusHandle();

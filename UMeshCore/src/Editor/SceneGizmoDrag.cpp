@@ -156,6 +156,102 @@ std::optional<SceneGizmoHit> hitTestGizmo(
     return SceneGizmoHit{best->id, best->axis, std::nullopt};
 }
 
+// ---- The GPU's input ----------------------------------------------------
+
+Vec4 sceneGizmoAxisColor(SceneGizmoHandleId id) {
+    switch (id) {
+        case SceneGizmoHandleId::kAxisX: return Vec4(0.94f, 0.33f, 0.35f, 1.0f);
+        case SceneGizmoHandleId::kAxisY: return Vec4(0.44f, 0.83f, 0.36f, 1.0f);
+        case SceneGizmoHandleId::kAxisZ: return Vec4(0.35f, 0.58f, 0.98f, 1.0f);
+        case SceneGizmoHandleId::kPlaneXY: return Vec4(0.35f, 0.58f, 0.98f, 1.0f);
+        case SceneGizmoHandleId::kPlaneXZ: return Vec4(0.44f, 0.83f, 0.36f, 1.0f);
+        case SceneGizmoHandleId::kPlaneYZ: return Vec4(0.94f, 0.33f, 0.35f, 1.0f);
+        default: return Vec4(0.98f, 0.82f, 0.30f, 1.0f);
+    }
+}
+
+SceneGizmoLayout buildGizmoLayout(
+    const SceneGizmoState& state, SceneGizmoTool tool,
+    const std::optional<SceneGizmoHit>& highlighted, const SceneLight* light) {
+    const SceneGizmoBasis& basis = state.basis;
+    const auto isHighlighted = [&](SceneGizmoHandleId id) {
+        return highlighted.has_value() && highlighted->id == id;
+    };
+
+    SceneGizmoLayout layout;
+    layout.tool = tool;
+    layout.origin = basis.origin;
+    layout.scale = state.scale;
+
+    if (tool == SceneGizmoTool::kRotate) {
+        for (SceneGizmoHandleId id : kAxisOrder) {
+            const std::optional<Vec3> direction = basis.direction(id);
+            if (!direction.has_value()) continue;
+            layout.rings.push_back({id, SceneGizmoLayout::RingGeometry{
+                                            *direction, sceneGizmoAxisColor(id),
+                                            isHighlighted(id),
+                                            axisDepthAlpha(state, *direction)}});
+        }
+    } else {
+        if (tool == SceneGizmoTool::kTranslate) {
+            for (SceneGizmoHandleId id : kPlaneOrder) {
+                if (!planeFacesCamera(state, id)) continue;
+                const PlaneAxes axes = planeAxes(id, basis);
+                layout.planes.push_back({id, SceneGizmoLayout::PlaneGeometry{
+                                                 axes.a, axes.b, sceneGizmoAxisColor(id),
+                                                 isHighlighted(id)}});
+            }
+        }
+        for (SceneGizmoHandleId id : kAxisOrder) {
+            const std::optional<Vec3> direction = basis.direction(id);
+            if (!direction.has_value()) continue;
+            // Refused on the same fact the hit test's arrow is: an axis
+            // pointing at the eye has no honest direction to grab.
+            if (!projectAxis(state, *direction).has_value()) continue;
+            layout.axes.push_back({id, SceneGizmoLayout::AxisGeometry{
+                                           *direction, sceneGizmoAxisColor(id),
+                                           isHighlighted(id),
+                                           axisDepthAlpha(state, *direction),
+                                           tool == SceneGizmoTool::kTranslate
+                                               ? SceneGizmoLayout::AxisHead::kArrow
+                                               : SceneGizmoLayout::AxisHead::kCube}});
+        }
+    }
+
+    // The free-move / uniform-scale handle, at the origin.
+    if (tool == SceneGizmoTool::kTranslate || tool == SceneGizmoTool::kScale) {
+        layout.centerHandle = SceneGizmoLayout::CenterHandle{
+            Vec4(1.0f, 1.0f, 1.0f, 1.0f),
+            isHighlighted(SceneGizmoHandleId::kFree) ||
+                isHighlighted(SceneGizmoHandleId::kUniform)};
+    }
+
+    layout.showViewRing = tool == SceneGizmoTool::kRotate;
+    layout.viewRingColor = Vec4(1.0f, 1.0f, 1.0f, 0.75f);
+
+    // Safe to normalise unconditionally: a `SceneGizmoState` exists only
+    // once the origin has projected, which puts it in front of the eye.
+    layout.eye = state.realProjection.eye;
+    layout.forward = normalize(basis.origin - state.realProjection.eye);
+
+    if (light != nullptr) {
+        const std::optional<SceneLightHandle> lightHighlight =
+            (highlighted.has_value() && highlighted->id == SceneGizmoHandleId::kLight)
+                ? highlighted->lightHandle
+                : std::nullopt;
+        layout.lightDiagram = lightDiagram(
+            lightWorldGeometry(*light, state.realProjection), *light, lightHighlight);
+    }
+
+    layout.viewProjection = state.projection.viewProjection();
+    // The size `screenOffsetPx` was measured against (`sceneGizmoState`
+    // takes it from the same `viewSize` it builds this projection with).
+    const Vec2 pixelSize = state.projection.viewSize;
+    layout.screenOffsetNDC = Vec2(2.0f * state.screenOffsetPx.x / pixelSize.x,
+                                  -2.0f * state.screenOffsetPx.y / pixelSize.y);
+    return layout;
+}
+
 // ---- The measurements ---------------------------------------------------
 
 std::optional<float> axisDragUnits(

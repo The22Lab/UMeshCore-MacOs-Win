@@ -225,6 +225,39 @@ puntos que agarra el artista y los anillos/arcos que dibuja la GPU
 (rellena el `SceneGizmoLayout::LightDiagram` que la Fase 4 dejó definido y
 sin llenar).
 
+**`buildGizmoLayout` + `sceneGizmoAxisColor`** (en `SceneGizmoDrag.h`) ←
+`gizmoLayout()` + `axisColor()` de `SceneGizmoOverlay.swift`. 6 tests. Con
+esto **`SceneGizmoOverlay.swift` queda cerrado para extracción**: lo que
+queda en él es cuerpo de vista (`body`, `grabShape()`, gestos, pegamento de
+undo con `SceneManager`) y el mapeo `toPixels`/`toView`, que es de
+plataforma a propósito.
+
+Era la pieza que unía las dos mitades ya portadas: el core tenía qué agarra
+el puntero (`hitTestGizmo`) y cómo se triangula (`SceneGizmoMeshBuilder`),
+pero no lo que convierte un `SceneGizmoState` en el `SceneGizmoLayout` que
+el builder consume. Va junto a `buildGizmoShape` y comparte con él el orden
+de iteración, porque la razón de ser del Swift es que lo que se dibuja y lo
+que se agarra sean la misma forma **por construcción**. El test central lo
+afirma así: los ejes dibujados son exactamente los que el hit test ofrece,
+y todo plano agarrable se dibuja. Otro comprueba que `viewProjection` +
+`screenOffsetNDC` pone el origen en el píxel donde lo ve la cámara real
+(con el signo del offset en Y invertido, falla por 143 px).
+
+Un predicado nuevo, **`planeFacesCamera`**: el Swift escribe el test de
+orientación de un plano dos veces (en `handleSet()` y en `gizmoLayout()`);
+aquí hay una copia, que usan `planeQuad` y el layout. La asimetría del
+Swift se conserva: el layout ofrece un plano solo por orientación, el hit
+test además exige que las cuatro esquinas proyecten (el rasterizador
+recorta; el hit test no tiene recortador).
+
+**Divergencia silenciosa encontrada y arreglada**: `lightDiagram()` pintaba
+una luz **apagada** con su propio color. En Swift (`lightDiagramLayout`) se
+aplana a **blanco**, y luego el mesh builder la atenúa: las dos cosas juntas
+son el aspecto "apagado". El port solo tenía la atenuación, así que una luz
+de color apagada salía como una versión desvaída de su color. Ningún test
+lo cubría (el del mesh builder fija el tint a mano). Ahora hay uno, y se
+comprobó que falla con el código viejo.
+
 **`Editor/GraphViewport.h/.cpp`** ← `GraphViewport.swift` (302 L) +
 `GraphMetrics.swift` (59 L). 9 tests. Primer trozo de la deuda del
 timeline, y el correcto para empezar: los dos archivos ya estaban limpios
@@ -440,9 +473,9 @@ vista propiamente dicho: `body`, la tira de herramientas del gizmo, los
 controles de navegación, y todo lo que delega en `SceneFrameRenderer`.
 `ringFrame` y las constantes de geometría que el mesh builder del gizmo
 necesita ya están extraídas a `Render/SceneGizmoLayout.h` (Fase 4, pieza
-5). Lo que queda de matemática real de hit-testing y curvas **dentro de
-cuerpos de vista SwiftUI** sigue en `SceneGizmoOverlay.swift` (lo que no se
-sacó ya) y `TimelineView.swift`. Hay que extraerla a UMeshCore *antes* de
+5). `SceneGizmoOverlay.swift` ya está cerrado (ver `buildGizmoLayout`,
+arriba). Lo que pueda quedar de matemática real **dentro de cuerpos de
+vista SwiftUI** está en `TimelineView.swift`. Hay que extraerla a UMeshCore *antes* de
 que la UI de Windows necesite lógica equivalente — portar desde un cuerpo
 de vista SwiftUI directamente es mucho más arriesgado que extraer primero
 en el Mac.

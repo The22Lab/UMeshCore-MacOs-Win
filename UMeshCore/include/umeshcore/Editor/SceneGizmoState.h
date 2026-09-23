@@ -12,7 +12,8 @@
 // taking it out on the Mac first -- which is the order CLAUDE.md commits
 // to. This file is the first half of that: everything `handleSet()` (the
 // CPU hit test) and `gizmoLayout()` (the GPU's input) BOTH start from. The
-// drag math is the second half and is not here yet.
+// second half -- the hit test, the drag math, and `buildGizmoLayout` (the
+// port of `gizmoLayout()`) -- is `Editor/SceneGizmoDrag.h`.
 //
 // ONE STATE, TWO CONSUMERS. The Swift source is explicit that this is the
 // point: "there is one place 'what does the gizmo look like right now'
@@ -256,6 +257,16 @@ struct PlaneAxes {
     Vec3 b;
 };
 PlaneAxes planeAxes(SceneGizmoHandleId id, const SceneGizmoBasis& basis);
+
+// Whether a plane handle faces the camera squarely enough to offer (see
+// `kSceneGizmoMinPlaneFacing`). False for an id that is not a plane.
+//
+// ONE PREDICATE, TWO CONSUMERS: `planeQuad` (the hit test's quad) and
+// `buildGizmoLayout` (the GPU's quad). Swift writes this facing test out
+// twice, once in `handleSet()` and once in `gizmoLayout()`; here there is
+// one copy, so a quad cannot be drawn where it would not be grabbable, or
+// the other way round, because someone changed only one of the two.
+bool planeFacesCamera(const SceneGizmoState& state, SceneGizmoHandleId id);
 
 // The four corners of a plane handle's quad, in pixels, or nothing when
 // the plane is turned too far edge-on to be worth offering (see

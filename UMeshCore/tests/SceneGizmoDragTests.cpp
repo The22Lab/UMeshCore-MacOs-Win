@@ -440,6 +440,201 @@ static void testThePredicatesUnderneath() {
     UM_CHECK(!convexContains({Vec2(0, 0), Vec2(1, 1)}, Vec2(0.5f, 0.5f))); // not a polygon
 }
 
+// ---- The GPU's input ----------------------------------------------------
+
+namespace {
+
+std::optional<SceneGizmoState> cardState(SceneGizmoTool tool) {
+    return sceneGizmoState(translateBasis(card(), tool), angledCamera(), kViewSize);
+}
+
+template <typename Geometry>
+bool hasEntry(const std::vector<SceneGizmoLayout::Entry<Geometry>>& entries,
+              SceneGizmoHandleId id) {
+    for (const auto& e : entries) {
+        if (e.id == id) return true;
+    }
+    return false;
+}
+
+bool vec4Equal(const Vec4& a, const Vec4& b) {
+    return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+}
+
+} // namespace
+
+static void testTheLayoutDrawsWhatTheHitTestOffers() {
+    // The Swift's whole reason for building both from one state: the
+    // manipulator the GPU draws and the one the pointer is tested against
+    // are the same shape by construction.
+    const auto state = cardState(SceneGizmoTool::kTranslate);
+    UM_CHECK(state.has_value());
+    if (!state.has_value()) return;
+    const auto shape = buildGizmoShape(*state);
+    UM_CHECK(shape.has_value());
+    if (!shape.has_value()) return;
+    const SceneGizmoLayout layout =
+        buildGizmoLayout(*state, SceneGizmoTool::kTranslate, std::nullopt);
+
+    // Axes: the SAME set, because both refuse on `projectAxis`.
+    UM_CHECK(layout.axes.size() == shape->axes.size());
+    for (const auto& entry : shape->axes) UM_CHECK(hasEntry(layout.axes, entry.first));
+    UM_CHECK(!layout.axes.empty());
+
+    // Planes: every quad the pointer can grab is drawn. (The converse need
+    // not hold -- the hit test also withdraws a quad whose corner fails to
+    // project, which the rasterizer would simply clip.)
+    for (const auto& entry : shape->planes) UM_CHECK(hasEntry(layout.planes, entry.first));
+    // And the drawn set is exactly the ones facing the camera.
+    for (SceneGizmoHandleId id : {SceneGizmoHandleId::kPlaneXY, SceneGizmoHandleId::kPlaneXZ,
+                                  SceneGizmoHandleId::kPlaneYZ}) {
+        UM_CHECK(hasEntry(layout.planes, id) == planeFacesCamera(*state, id));
+    }
+}
+
+static void testEachToolBuildsOnlyTheHandlesItShows() {
+    const auto state = cardState(SceneGizmoTool::kTranslate);
+    UM_CHECK(state.has_value());
+    if (!state.has_value()) return;
+
+    // Rotate: three rings and the view ring. No arrows, no planes, no
+    // centre square -- none of them is grabbable with this tool.
+    const SceneGizmoLayout rotate = buildGizmoLayout(*state, SceneGizmoTool::kRotate, std::nullopt);
+    UM_CHECK(rotate.rings.size() == 3);
+    UM_CHECK(rotate.axes.empty() && rotate.planes.empty());
+    UM_CHECK(rotate.showViewRing);
+    UM_CHECK(!rotate.centerHandle.has_value());
+    UM_CHECK(vec4Equal(rotate.viewRingColor, Vec4(1, 1, 1, 0.75f)));
+
+    // Translate: arrows, the plane quads, and the free-move square.
+    const SceneGizmoLayout translate =
+        buildGizmoLayout(*state, SceneGizmoTool::kTranslate, std::nullopt);
+    UM_CHECK(translate.rings.empty() && !translate.showViewRing);
+    UM_CHECK(translate.centerHandle.has_value());
+    for (const auto& e : translate.axes) {
+        UM_CHECK(e.geometry.head == SceneGizmoLayout::AxisHead::kArrow);
+    }
+
+    // Scale: cube heads, the uniform-scale square, and NO planes -- the
+    // plane handles are a translate-only affordance.
+    const SceneGizmoLayout scale = buildGizmoLayout(*state, SceneGizmoTool::kScale, std::nullopt);
+    UM_CHECK(scale.planes.empty() && scale.rings.empty());
+    UM_CHECK(scale.centerHandle.has_value());
+    UM_CHECK(!scale.axes.empty());
+    for (const auto& e : scale.axes) UM_CHECK(e.geometry.head == SceneGizmoLayout::AxisHead::kCube);
+
+    // Shear: cube heads too, and no centre square -- there is no "uniform
+    // shear" to grab.
+    const SceneGizmoLayout shear = buildGizmoLayout(*state, SceneGizmoTool::kShear, std::nullopt);
+    UM_CHECK(shear.planes.empty() && !shear.centerHandle.has_value());
+    for (const auto& e : shear.axes) UM_CHECK(e.geometry.head == SceneGizmoLayout::AxisHead::kCube);
+}
+
+static void testColoursAreTheSwiftsConstantsAndAPlaneTakesItsNormal() {
+    // Numbers copied by hand from `SceneGizmoOverlay.axisColor`.
+    const Vec4 red(0.94f, 0.33f, 0.35f, 1), green(0.44f, 0.83f, 0.36f, 1),
+        blue(0.35f, 0.58f, 0.98f, 1), gold(0.98f, 0.82f, 0.30f, 1);
+    UM_CHECK(vec4Equal(sceneGizmoAxisColor(SceneGizmoHandleId::kAxisX), red));
+    UM_CHECK(vec4Equal(sceneGizmoAxisColor(SceneGizmoHandleId::kAxisY), green));
+    UM_CHECK(vec4Equal(sceneGizmoAxisColor(SceneGizmoHandleId::kAxisZ), blue));
+    // The blue quad is the one that keeps Z fixed.
+    UM_CHECK(vec4Equal(sceneGizmoAxisColor(SceneGizmoHandleId::kPlaneXY), blue));
+    UM_CHECK(vec4Equal(sceneGizmoAxisColor(SceneGizmoHandleId::kPlaneXZ), green));
+    UM_CHECK(vec4Equal(sceneGizmoAxisColor(SceneGizmoHandleId::kPlaneYZ), red));
+    UM_CHECK(vec4Equal(sceneGizmoAxisColor(SceneGizmoHandleId::kFree), gold));
+}
+
+static void testTheHighlightLandsOnTheHandleThePointerIsOverAndNowhereElse() {
+    const auto state = cardState(SceneGizmoTool::kTranslate);
+    UM_CHECK(state.has_value());
+    if (!state.has_value()) return;
+
+    SceneGizmoHit overY;
+    overY.id = SceneGizmoHandleId::kAxisY;
+    const SceneGizmoLayout layout = buildGizmoLayout(*state, SceneGizmoTool::kTranslate, overY);
+    int lit = 0;
+    for (const auto& e : layout.axes) {
+        if (e.geometry.highlighted) {
+            ++lit;
+            UM_CHECK(e.id == SceneGizmoHandleId::kAxisY);
+        }
+    }
+    for (const auto& e : layout.planes) UM_CHECK(!e.geometry.highlighted);
+    UM_CHECK(lit == 1);
+    UM_CHECK(layout.centerHandle.has_value() && !layout.centerHandle->highlighted);
+
+    // The centre square answers to EITHER of the two ids it stands for.
+    SceneGizmoHit overUniform;
+    overUniform.id = SceneGizmoHandleId::kUniform;
+    const SceneGizmoLayout scale = buildGizmoLayout(*state, SceneGizmoTool::kScale, overUniform);
+    UM_CHECK(scale.centerHandle.has_value() && scale.centerHandle->highlighted);
+}
+
+static void testTheGpuDrawsTheGizmoWhereTheRealCameraSeesTheObject() {
+    // What `viewProjection` + `screenOffsetNDC` exist for: the stabilised
+    // camera puts the origin dead centre, and the offset slides it back to
+    // where the REAL camera sees it. Get the sign or the divisor wrong and
+    // the manipulator floats away from the card it is attached to.
+    const auto state = cardState(SceneGizmoTool::kTranslate);
+    UM_CHECK(state.has_value());
+    if (!state.has_value()) return;
+    const SceneGizmoLayout layout =
+        buildGizmoLayout(*state, SceneGizmoTool::kTranslate, std::nullopt);
+
+    const Vec3& o = layout.origin;
+    const Vec4 clip = layout.viewProjection * Vec4(o.x, o.y, o.z, 1.0f);
+    UM_CHECK(clip.w > 0.0f);
+    const float ndcX = clip.x / clip.w + layout.screenOffsetNDC.x;
+    const float ndcY = clip.y / clip.w + layout.screenOffsetNDC.y;
+    // NDC y up, pixels y down.
+    const Vec2 drawnPx((ndcX + 1.0f) * 0.5f * kViewSize.x, (1.0f - ndcY) * 0.5f * kViewSize.y);
+
+    const Vec2 truePx = project(angledCamera(), o);
+    UM_CHECK_NEAR(drawnPx.x, truePx.x, 0.05);
+    UM_CHECK_NEAR(drawnPx.y, truePx.y, 0.05);
+    // And it is not the trivial case: the card is well off centre.
+    UM_CHECK(length(truePx - kViewSize * 0.5f) > 50.0f);
+}
+
+static void testALightsDiagramComesOnlyWithALightAndCarriesItsOwnHighlight() {
+    SceneLight light;
+    light.kind = SceneLightKind::kSpot;
+    light.position = Vec2(120, -40);
+    light.positionZ = 200;
+    light.radius = 700;
+    light.softness = 0.4f;
+    light.innerAngle = 15.0f * kPi / 180.0f;
+    light.outerAngle = 35.0f * kPi / 180.0f;
+
+    const auto state = sceneGizmoState(lightBasis(light), angledCamera(), kViewSize);
+    UM_CHECK(state.has_value());
+    if (!state.has_value()) return;
+
+    const SceneGizmoLayout none = buildGizmoLayout(*state, SceneGizmoTool::kTranslate, std::nullopt);
+    UM_CHECK(!none.lightDiagram.has_value());
+
+    SceneGizmoHit overRadius;
+    overRadius.id = SceneGizmoHandleId::kLight;
+    overRadius.lightHandle = SceneLightHandle::kRadius;
+    const SceneGizmoLayout lit =
+        buildGizmoLayout(*state, SceneGizmoTool::kTranslate, overRadius, &light);
+    UM_CHECK(lit.lightDiagram.has_value());
+    if (!lit.lightDiagram.has_value()) return;
+    UM_CHECK(!lit.lightDiagram->handles.empty());
+    int highlighted = 0;
+    for (const auto& h : lit.lightDiagram->handles) highlighted += h.highlighted ? 1 : 0;
+    UM_CHECK(highlighted == 1);
+
+    // A highlight on an AXIS lights no dot on the diagram.
+    SceneGizmoHit overX;
+    overX.id = SceneGizmoHandleId::kAxisX;
+    const SceneGizmoLayout axisLit =
+        buildGizmoLayout(*state, SceneGizmoTool::kTranslate, overX, &light);
+    UM_CHECK(axisLit.lightDiagram.has_value());
+    if (!axisLit.lightDiagram.has_value()) return;
+    for (const auto& h : axisLit.lightDiagram->handles) UM_CHECK(!h.highlighted);
+}
+
 UM_TEST_MAIN_BEGIN()
     testAnAxisDragMovesTheCardByTheWorldDistanceItWasAskedFor();
     testAPlaneDragIsOneExactIntersectionNotTwoAxisMeasurements();
@@ -452,4 +647,10 @@ UM_TEST_MAIN_BEGIN()
     testTheHitTestPrefersAnAreaToALineAndNeverTiesByChance();
     testRotateGrabsTheNearestRingAndTheViewRingByItsRadius();
     testThePredicatesUnderneath();
+    testTheLayoutDrawsWhatTheHitTestOffers();
+    testEachToolBuildsOnlyTheHandlesItShows();
+    testColoursAreTheSwiftsConstantsAndAPlaneTakesItsNormal();
+    testTheHighlightLandsOnTheHandleThePointerIsOverAndNowhereElse();
+    testTheGpuDrawsTheGizmoWhereTheRealCameraSeesTheObject();
+    testALightsDiagramComesOnlyWithALightAndCarriesItsOwnHighlight();
 UM_TEST_MAIN_END()

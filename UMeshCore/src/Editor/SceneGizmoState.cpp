@@ -182,17 +182,21 @@ PlaneAxes planeAxes(SceneGizmoHandleId id, const SceneGizmoBasis& basis) {
     }
 }
 
-std::optional<std::vector<Vec2>> planeQuad(
-    const SceneGizmoState& state, SceneGizmoHandleId id) {
+bool planeFacesCamera(const SceneGizmoState& state, SceneGizmoHandleId id) {
     const std::optional<Vec3> normal = planeNormal(id, state.basis);
-    if (!normal.has_value()) return std::nullopt;
+    if (!normal.has_value()) return false;
     // Turned too far edge-on and the quad is a sliver: there is nothing to
     // aim at, and the ray-plane intersection behind it becomes
     // ill-conditioned in the same breath. Offered or refused on the same
     // fact, rather than drawn and then failing when grabbed.
     const float facing =
         std::fabs(dot(normalize(state.basis.origin - state.realProjection.eye), *normal));
-    if (!(facing > kSceneGizmoMinPlaneFacing)) return std::nullopt;
+    return facing > kSceneGizmoMinPlaneFacing;
+}
+
+std::optional<std::vector<Vec2>> planeQuad(
+    const SceneGizmoState& state, SceneGizmoHandleId id) {
+    if (!planeFacesCamera(state, id)) return std::nullopt;
 
     const PlaneAxes axes = planeAxes(id, state.basis);
     const float lo = kSceneGizmoPlaneOffset * state.scale;

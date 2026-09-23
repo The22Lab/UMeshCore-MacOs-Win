@@ -135,6 +135,52 @@ std::optional<SceneGizmoHit> hitTestGizmo(
     const SceneGizmoShape& shape, const Vec2& pointPx, SceneGizmoTool tool,
     float lightGrabPx = kSceneLightGrabPixels);
 
+// ---- The GPU's input ----------------------------------------------------
+//
+// `gizmoLayout()` from `SceneGizmoOverlay.swift` -- the last piece of
+// logic that file held. It turns the same `SceneGizmoState` the hit test
+// above starts from into the `SceneGizmoLayout` that
+// `Render/SceneGizmoMeshBuilder` turns into triangles. Before it came
+// across, the core had both ends of the gizmo (what a pointer grabs, what
+// the GPU draws) and nothing joining them: a Windows shell would have had
+// to reverse-engineer the join from a SwiftUI view body.
+//
+// SAME STARTING POINT AS `buildGizmoShape`, same iteration order (the two
+// share `kAxisOrder`/`kPlaneOrder` in the .cpp) and, for planes, the same
+// predicate (`planeFacesCamera`). The Swift is explicit that this is the
+// point: the manipulator the GPU draws and the one the pointer is tested
+// against are the same shape by construction.
+//
+// Unlike the shape, only what the TOOL shows is built: a rotate ring made
+// while the translate tool is active is vertices for a handle nobody can
+// grab, since `hitTestGizmo` never offers it either.
+//
+// ONE ASYMMETRY WITH THE SHAPE, AND IT IS SWIFT'S: an axis is kept when it
+// survives `projectAxis` (the same `kSceneGizmoMinAxisPixels` guard as the
+// shape), but a plane is kept on `planeFacesCamera` alone, without
+// `planeQuad`'s further "all four corners project" requirement. A quad
+// whose corner will not project is still drawn -- the rasterizer clips it
+// -- while the hit test withdraws it, having no clipper of its own.
+
+// X red, Y green, Z blue, the convention every 3D editor shares. A plane
+// takes the colour of the axis it is NORMAL to (the blue quad is the one
+// that keeps Z fixed). Anything else gets the gizmo's gold. RGBA floats,
+// because the only consumer is vertex colour.
+Vec4 sceneGizmoAxisColor(SceneGizmoHandleId id);
+
+// `highlighted` is what the pointer is over -- `hitTestGizmo`'s answer,
+// passed straight through. `light` is the gizmo's target when that is a
+// light; its diagram is built through the REAL projection, as
+// `buildGizmoShape` builds its dots.
+//
+// No `pixelSize` parameter, by the Swift's own reasoning: the NDC offset
+// is taken from `state`'s projection, the number the hit-test half of the
+// same frame already used. A second copy passed by the caller would be a
+// second number that could disagree with it.
+SceneGizmoLayout buildGizmoLayout(
+    const SceneGizmoState& state, SceneGizmoTool tool,
+    const std::optional<SceneGizmoHit>& highlighted, const SceneLight* light = nullptr);
+
 // ---- The measurements ---------------------------------------------------
 
 // World units this drag asks for along a world axis. Absent when the axis

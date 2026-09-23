@@ -2121,6 +2121,46 @@ zoom steps, on-center and off-center both -- rather than re-deriving the
 pan correction the way `GraphViewport`'s own zoom-anchor test does. All
 55 test binaries pass.
 
+### `buildGizmoLayout` -- closing out `SceneGizmoOverlay.swift`
+
+A read-through of the whole of `SceneGizmoOverlay.swift` (1,732 L) against
+the four files already extracted from it (`SceneGizmoState`,
+`SceneGizmoDrag`, `SceneLightGizmo`, `SceneGizmoMeshBuilder`) found every
+function covered except one: `gizmoLayout()` (with its `axisColor()`), the
+function that turns a `SceneGizmoState` into the `SceneGizmoLayout` the
+mesh builder consumes. The core had both ends of the gizmo -- what a
+pointer grabs and how the manipulator is triangulated -- and nothing
+joining them. It now lives in `Editor/SceneGizmoDrag.h/.cpp` as
+`buildGizmoLayout` + `sceneGizmoAxisColor`, beside `buildGizmoShape`,
+sharing its axis/plane iteration order: the Swift's point is that the
+manipulator drawn and the manipulator grabbed are the same shape by
+construction. What remains in the Swift file is view body and the
+deliberately platform-side `toPixels`/`toView` mapping, so the file is
+closed out for extraction.
+
+One refactor rather than a copy: the plane-facing test, which Swift writes
+out in both `handleSet()` and `gizmoLayout()`, is now a single
+`planeFacesCamera` predicate used by `planeQuad` and the layout alike.
+Swift's asymmetry is kept: the layout offers a plane on facing alone,
+while the hit test also requires all four corners to project (the
+rasterizer clips; the CPU hit test has no clipper).
+
+**A silent divergence found and fixed.** `lightDiagram()` tinted a
+DISABLED light with its own colour. Swift's `lightDiagramLayout` flattens
+it to white, and the mesh builder then dims it; the port had only the dim,
+so an off coloured light drew as a faded version of its own hue. No test
+exercised it -- the mesh-builder test sets the tint by hand. There is one
+now, and it was checked to fail against the old line.
+
+Tested: 6 new tests in `SceneGizmoDragTests.cpp`, 1 in
+`SceneLightGizmoTests.cpp`. The central property is stated, not
+re-derived: the drawn axes are exactly the ones the hit test offers, and
+every grabbable plane is drawn. Another projects the origin through
+`viewProjection` + `screenOffsetNDC` and requires it to land on the pixel
+the real camera puts it at; with the Y offset's sign flipped it misses by
+143 px, which was checked. Colours are the Swift's constants, copied by
+hand. All 55 test binaries pass.
+
 ## Named risks
 
 1. **`SceneManager.swift` god-object** (7,376 lines, 87 `@Published`
