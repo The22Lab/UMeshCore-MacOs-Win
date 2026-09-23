@@ -1054,6 +1054,10 @@ bloqueado por el pipeline de alfa, `MeshTool`, y la deuda SwiftUI de
 
 ## Fase 6 — la fase actual
 
+> **¿Retomas el trabajo?** Empieza por `UMeshCore/HANDOFF.md`: el punto
+> exacto en que se dejó, lo primero que hay que hacer, el bucle de
+> compilación con el Mac del usuario y la lista ordenada de lo que falta.
+
 Lo primero que necesitan **6a y 6b** es lo mismo: que la librería sea
 **consumible desde fuera**. Eso ya está.
 
@@ -1292,8 +1296,9 @@ porque `EditorScene` lleva el historial de undo dentro y Swift copia
 valores cuando quiere. El lado C++ (`Interop/SwiftModelBridge.h`: opcionales,
 mapas como listas ordenadas, enums por nombre, constraints como structs
 planos) tiene su suite aquí; el lado Swift, `BridgeRoundTripTests.swift`
-en el Mac. **Todo el Swift de `Bridge/` llega compilado cero veces**: el
-siguiente ⌘U dirá qué hay que ajustar. Detalle en `MIGRATION.md` § B.
+en el Mac. **La app ya compila con `Bridge/` en el Mac**; los 5 errores del
+target de tests están corregidos en `7de0d2e`, y falta el ⌘U que ejecute
+`BridgeRoundTripTests` por primera vez. Detalle en `MIGRATION.md` § B.
 
 Siguiente: Scene en el puente (B-1c) y B0 (`SceneManager` sobre
 `CoreSession`).

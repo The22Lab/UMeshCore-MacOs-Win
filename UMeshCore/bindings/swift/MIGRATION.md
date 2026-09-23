@@ -233,8 +233,17 @@ que hoy.
      Swift una clase polimórfica ha cambiado entre versiones.
    - `ToolManager` queda fuera de la sesión por ahora (no copiable →
      `~Copyable` en Swift; se prueba aparte cuando lleguen las tools).
-   - Primer ⌘U de la etapa B: **pendiente** (todo el Swift de `Bridge/`
-     llega compilado cero veces).
+   - **Estado en el Mac:** la app compila con `Bridge/`. El target de
+     tests dio 5 errores, corregidos en `7de0d2e`; `BridgeRoundTripTests`
+     aún no se ha ejecutado.
+   - **Lecciones de interop de ese ciclo** (valen para todo lo que sigue):
+     `UUID(core:)` no resuelve desde otro módulo (el target de tests) —
+     solo aparecía `UUID()` —, así que se usa `CoreUUID.uuid(_:)` y la
+     conversión se saca fuera de la autoclosure de `XCTAssert`. En un
+     literal `[String: UUID?]` un slot vacío es `nil as UUID?`, no
+     `.some(nil)`. Lo que sí funcionó a la primera: `switch` sobre casos
+     de `enum class` C++, `push_back` sobre alias nombrados, `&x` para
+     `T&`, `std.string` ↔ `String`, y `UnsafeMutablePointer<EditorSession>`.
 2. **B0 — el estado se muda a C++**: las propiedades de modelo de
    `SceneManager` pasan a ser computadas sobre `core` (con caché del espejo
    Swift invalidada por token — `skeleton` se lee 82 veces en las vistas y
