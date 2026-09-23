@@ -38,6 +38,7 @@
 
 // ---- Core ----
 // Cross-cutting primitives.
+#include "umeshcore/Core/NaturalCompare.h"
 #include "umeshcore/Core/Uuid.h"
 
 // ---- Model ----
@@ -92,6 +93,7 @@
 #include "umeshcore/Editor/GizmoHandle.h"
 #include "umeshcore/Editor/GraphViewport.h"
 #include "umeshcore/Editor/HierarchyDisplay.h"
+#include "umeshcore/Editor/IKBuilder.h"
 #include "umeshcore/Editor/MeshOverlayMetrics.h"
 #include "umeshcore/Editor/MoveGizmoMetrics.h"
 #include "umeshcore/Editor/RotateGizmoMetrics.h"

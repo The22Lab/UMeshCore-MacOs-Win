@@ -7,6 +7,7 @@
 
 add_library(umeshcore STATIC
     Version.cpp
+    Core/NaturalCompare.cpp
     Animation/AnimationClip.cpp
     Animation/AnimationLibrary.cpp
     Animation/SceneAnimator.cpp
@@ -49,6 +50,9 @@ add_library(umeshcore STATIC
     Editor/TimelineGraphMath.cpp
     Editor/HierarchyDisplay.cpp
     Editor/SceneViewport.cpp
+    Editor/IKBuilder.cpp
+    Editor/EditorSceneStructure.cpp
+    Editor/EditorSceneSkins.cpp
     Interop/SwiftBridge.cpp
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp

@@ -20,29 +20,34 @@
 // `announceChange()` rate-limits to 12 Hz while the transport rolls.
 // Publishing them would fire 60 notifications a second into a dozen
 // observing views, since `applyAnimations()` alone has 49 call sites.
-// See ROADMAP.md's named
-// risk #1: this is deliberately NOT a full SceneManager port -- each later
-// phase absorbs more of SceneManager's surface into this class or a sibling
-// one as tools/subsystems that need it get ported, rather than attempting
-// the whole 7,400-line class in one pass.
+// See ROADMAP.md's named risk #1.
+//
+// PHASE 6a CHANGED WHAT THIS CLASS IS. It began as the minimal aggregate
+// the tools need. The user's decision to disconnect the Swift core
+// entirely means the Swift `SceneManager` becomes an adapter over THIS,
+// so this class now grows into the real SceneManager: model state plus
+// every operation the UI calls (264 distinct members, measured), the same
+// implementation the Windows shell will use. What stays out is pure UI
+// state (panel flags, hover highlights, notices) -- that is the adapter's.
+// Plan and inventory: `bindings/swift/MIGRATION.md`.
+//
+// The inline methods below are the original tool-facing core; everything
+// absorbed since is declared here and defined by area in
+// `src/Editor/EditorScene*.cpp` (structure, skins, ...), so no single file
+// has to hold 7 400 lines.
 //
 // Fields and methods here are 1:1 with their SceneManager counterparts
-// (same names, same semantics) except where noted. Deliberately NOT
-// included yet, because nothing in this port sets or reads them:
-// `selectedKeyframes`/`selectedKeyframe` (timeline multi-selection --
-// belongs with the timeline UI port), `ikBuilder` (the IK-chain-building
-// wizard's draft state), `meshWeightPaintEnabled`/`isMeshEditEnabled`/
-// `isBindingBonesMode`/`pendingCanvasMode`/`meshEditNotice` (Bind Mode /
-// weight paint / mesh edit mode -- `MeshTool`/`BoneTool` scope, not yet
-// ported), `activeWeightPaintBoneID`, and anything from `CanvasPicking`
-// (needs Phase 4/5's asset/texture pipeline). Consequently,
+// (same names, same semantics) except where noted IN THE .cpp THAT
+// DEFINES THEM. Not absorbed yet: `ikBuilder` draft state, the mesh-edit
+// and weight-paint modes (`MeshTool`), and anything from `CanvasPicking`
+// that needs a loaded texture's alpha. Until the sprite modes land,
 // `boneSelectionBecameNonEmpty`'s Swift counterpart calls
-// `leaveSpriteModes()`, which this port omits: with every flag it would
-// touch permanently false today, that call is a no-op, not a behavior
-// change -- porting it for real is deferred to when those modes land.
+// `leaveSpriteModes()`, which this omits: with every flag it would touch
+// permanently false, that call is a no-op here, not a behavior change.
 
 #include <algorithm>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -52,6 +57,7 @@
 #include "umeshcore/Constraints/ConstraintAnimation.h"
 #include "umeshcore/Core/Uuid.h"
 #include "umeshcore/Editor/UndoRedoManager.h"
+#include "umeshcore/Model/HierarchyItem.h"
 #include "umeshcore/Model/SceneImage.h"
 #include "umeshcore/Model/Skeleton.h"
 #include "umeshcore/Model/Skin.h"
@@ -68,6 +74,37 @@ public:
     std::optional<Uuid> activeSkinID;
     std::vector<AnimationEvent> animationEvents;
     std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> constraintSetupValues;
+
+    // --- Structure (Phase 6a: absorbed from SceneManager) ---
+
+    // The outliner's rows. Their `order` is kept dense (0..n-1) by
+    // `normalizeOrder` after every structural edit.
+    std::vector<HierarchyItem> hierarchyItems;
+
+    // The AUTHORED draw order: sprite ids, front to back. Its own list on
+    // purpose -- the tree answers "what is parented to what", draw order
+    // answers "what is in front of what", and deriving the second from the
+    // first threw away any order written across a bone boundary. Empty
+    // means "not authored yet", and the array order of `images` applies.
+    // Written only through `setAuthoredDrawOrder`. NOT part of the undo
+    // snapshot, which matches Swift.
+    std::vector<Uuid> authoredDrawOrder;
+
+    // What the last animation pass decided, stored the way Swift stores
+    // them (`@Published private(set)`): the keyed draw order, if a draw
+    // order key is in effect, and which attachment each keyed slot shows.
+    // A slot ABSENT from the map is left to the skin; present with nullopt
+    // is deliberately empty.
+    std::optional<std::vector<Uuid>> animatedDrawOrder;
+    std::unordered_map<std::string, std::optional<Uuid>> animatedAttachments;
+
+    // Cached resolution of the active skin. Recomputed when skins, slots or
+    // the sprite list change, never per draw.
+    SkinResolution skinResolution;
+
+    // The timeline's keyframe selection.
+    std::vector<SelectedKeyframe> selectedKeyframes;
+    std::optional<SelectedKeyframe> selectedKeyframe;
 
     // --- Animation transport (owned by the timeline in Swift; a plain
     // field here, set by whatever plays that role) ---
@@ -168,6 +205,14 @@ public:
         // `Data/SceneManager.swift`'s `setSelection` comment: clearing one
         // field of three left bones selected but invisible.
         applyBoneSelection({});
+        // Keyframes stay selected only on the sprites still selected.
+        std::vector<SelectedKeyframe> kept;
+        for (const SelectedKeyframe& k : selectedKeyframes) {
+            if (selectedImageIDs.contains(k.imageID)) kept.push_back(k);
+        }
+        selectedKeyframes = std::move(kept);
+        selectedKeyframe = selectedKeyframes.empty() ? std::nullopt
+                                                     : std::optional<SelectedKeyframe>(selectedKeyframes.front());
     }
 
     void clearSelection() {
@@ -185,7 +230,13 @@ public:
         isMeshLayerSelected = true;
     }
 
-    void selectMeshVertices(std::unordered_set<int> indices) { selectedMeshVertexIndices = std::move(indices); }
+    // A vertex selection and an internal-edge selection are exclusive:
+    // selecting vertices drops the edge (Swift does this; the earlier port
+    // did not, so a stale edge stayed "selected" under a vertex drag).
+    void selectMeshVertices(std::unordered_set<int> indices) {
+        selectedMeshVertexIndices = std::move(indices);
+        if (!selectedMeshVertexIndices.empty()) selectedMeshInternalEdgeIndex = std::nullopt;
+    }
 
     // Replace or extend the bone selection. `ids` arrive in the order they
     // should hold; `primary`, when given and still present, moves to the
@@ -402,20 +453,12 @@ public:
     }
 
     // Creates a new bone from `start` to `end` (world space), optionally
-    // parented to `parentID`, selects it, and returns its id. 1:1 port of
-    // `SceneManager.addBone`, minus the hierarchy-panel bookkeeping
-    // (`hierarchyItems`/`normalizeOrder`/`syncImagesToHierarchy`) that
-    // Swift's version also does -- outliner/UI-panel state, outside
-    // EditorScene's "what tools need" boundary (see this file's header).
-    Uuid addBone(Vec2 start, Vec2 end, std::optional<Uuid> parentID = std::nullopt) {
-        pushUndoState();
-        const int boneIndex = static_cast<int>(skeleton.bones().size()) + 1;
-        const std::optional<Mat4> parentMatrix = parentID.has_value() ? skeleton.worldMatrix(*parentID) : std::nullopt;
-        const Bone bone = Bone::make("Bone " + std::to_string(boneIndex), start, end, parentID, parentMatrix);
-        skeleton = skeleton.addingBone(bone);
-        selectBone(bone.id);
-        return bone.id;
-    }
+    // parented to `parentID`, gives it its outliner row, selects it, and
+    // returns its id. 1:1 port of `SceneManager.addBone`. (The row used to
+    // be left out as "panel state"; since Phase 6a `hierarchyItems` is
+    // model state here, and a bone with no row drops its whole subtree out
+    // of `displayHierarchyIDs`.)
+    Uuid addBone(Vec2 start, Vec2 end, std::optional<Uuid> parentID = std::nullopt);
 
     // --- Undo/redo ---
 
@@ -452,11 +495,109 @@ public:
             skeleton, images, sceneAnimationClip, constraintSetupValues, isAnimationEditingEnabled, isPoseMode,
             animationTime, currentFrame, imageID, lastBoundImageRotation);
     }
+    // `SceneManager.applyAnimations`: runs the whole per-frame pass and
+    // STORES the keyed draw order and attachments it decided, which is what
+    // the render order and the hidden set read.
     AnimationFrameResult applyAnimationsNow() {
-        return umeshcore::applyAnimations(
+        AnimationFrameResult result = umeshcore::applyAnimations(
             skeleton, images, sceneAnimationClip, constraintSetupValues, isAnimationEditingEnabled, isPoseMode,
             animationTime, lastBoundImageRotation);
+        animatedDrawOrder = result.animatedDrawOrder;
+        animatedAttachments = result.animatedAttachments;
+        return result;
     }
+
+    // `isAnimationEditingEnabled.didSet`: leaving Animator drops every live
+    // mesh deform, so Editor edits the array it draws.
+    void setAnimationEditingEnabled(bool enabled);
+
+    // ---- Structure: hierarchy, draw order, deletion (EditorSceneStructure.cpp)
+
+    // A sprite from an asset, as `SceneManager.addImage` makes one. The
+    // asset arrives as the three facts this needs (Swift passes a whole
+    // `TextureAsset`; convention #2). Returns the new sprite's id.
+    Uuid addImage(Uuid assetID, const std::string& assetName, Vec2 assetSize, Vec2 position,
+                  std::optional<Uuid> normalMapAssetID);
+
+    std::vector<Uuid> displayHierarchyIDs() const;
+    void moveHierarchyItem(Uuid id, int toDisplayIndex);
+
+    // Every current sprite exactly once: the authored order, then sprites
+    // imported since, in the order they arrived. Resolved on read so nothing
+    // has to keep it in step with imports and deletions.
+    std::vector<Uuid> resolvedDrawOrder() const;
+    void setAuthoredDrawOrder(std::vector<Uuid> order);
+    // Sprites in the order to draw THIS frame, minus what the skin or an
+    // attachment key hides.
+    std::vector<SceneImage> renderOrderedImages() const;
+    // What the Draw Order panel lists: the same as the render order, so the
+    // panel agrees with the viewport while animating.
+    std::vector<SceneImage> imagesInDrawOrder() const { return renderOrderedImages(); }
+    void moveImageInDrawOrder(Uuid imageID, int toDrawIndex);
+    void nudgeImageInDrawOrder(Uuid imageID, bool forward);
+    void sortDrawOrderByBoneDepth();
+
+    // Move `moved` to where `target` is now, by IDENTITY (an index measured
+    // before the removal landed a downward drag one row too far).
+    static std::optional<std::vector<Uuid>> movingID(Uuid moved, Uuid before, const std::vector<Uuid>& order);
+    static std::optional<std::vector<Uuid>> movingIDToRow(Uuid moved, int row, const std::vector<Uuid>& order);
+    static std::optional<Uuid> idAtRow(int row, const std::vector<Uuid>& order);
+
+    void deleteHierarchy(Uuid itemID);
+    void deleteHierarchyAt(const std::vector<int>& offsets);
+    void duplicateSelected();
+    void duplicateItem(Uuid id);
+    void reparentBone(Uuid id, std::optional<Uuid> parentID);
+    void bindImage(Uuid imageID, std::optional<Uuid> boneID);
+    void updateVisibility(Uuid itemID, bool isHidden);
+    // Renames the row AND the sprite or bone it names. False when nothing
+    // changed, so a blur with no edit pushes no undo.
+    bool renameHierarchyItem(Uuid itemID, const std::string& proposed);
+
+    // ---- Draw order keys (EditorSceneStructure.cpp)
+    void keyDrawOrder();
+    void keyDrawOrder(const std::vector<Uuid>& order);
+    void removeDrawOrderKeyAtPlayhead();
+    void removeDrawOrderTrack();
+    bool hasDrawOrderTrack() const;
+    bool drawOrderHasKeyAtPlayhead() const;
+    // Drops tracks whose owner is gone and rewrites draw order keys that
+    // name deleted sprites, rather than dropping them.
+    void pruneSceneAnimationTracks();
+
+    // ---- Skins, slots, attachments (EditorSceneSkins.cpp)
+    std::unordered_map<std::string, std::vector<Uuid>> slotMembers() const;
+    std::vector<std::string> variantSlotNames() const;
+    std::vector<std::string> allSlotNames() const;
+    const Skin* activeSkin() const;
+    void refreshSkinResolution();
+    bool isHiddenByActiveSkin(Uuid imageID) const;
+    std::unordered_set<Uuid, UuidHash> attachmentHiddenImageIDs() const;
+    std::vector<SceneImage> attachments(const std::string& slotName) const;
+    std::optional<Uuid> shownAttachment(const std::string& slotName) const;
+
+    void setSlotName(const std::string& slotName, Uuid imageID);
+    void assignSlot(const std::string& slotName, const std::vector<Uuid>& imageIDs);
+    void renameSlot(const std::string& oldName, const std::string& newName);
+
+    Uuid createSkin(std::optional<std::string> requestedName, bool activate);
+    std::optional<Uuid> duplicateSkin(Uuid id);
+    void renameSkin(Uuid id, const std::string& newName);
+    void deleteSkin(Uuid id);
+    // `activeSkinID.didSet`: the resolution follows the active skin.
+    void setActiveSkin(std::optional<Uuid> id);
+
+    void showAttachment(const std::string& slotName, std::optional<Uuid> imageID);
+    void keyAttachment(const std::string& slotName, std::optional<Uuid> imageID);
+    bool attachmentHasKeyAtPlayhead(const std::string& slotName) const;
+    void removeAttachmentKeyAtPlayhead(const std::string& slotName);
+    void setSkinAttachment(Uuid skinID, const std::string& slot, std::optional<Uuid> imageID);
+    void clearSkinAttachment(Uuid skinID, const std::string& slot);
+    void captureCurrentArrangement(Uuid skinID);
+    bool addSkinInclusion(Uuid skinID, Uuid includedID);
+    void removeSkinInclusion(Uuid skinID, Uuid includedID);
+    // Drop skin references to sprites that no longer exist.
+    void pruneSkins();
 
 private:
     bool interactionPushed_ = false;
@@ -466,19 +607,23 @@ private:
         s.images = images;
         s.skeleton = skeleton;
         s.sceneAnimationClip = sceneAnimationClip;
+        s.constraintSetupValues = constraintSetupValues;
         s.skins = skins;
         s.activeSkinID = activeSkinID;
         s.animationEvents = animationEvents;
         return s;
     }
-    void applySnapshot(const SceneSnapshot& s) {
-        images = s.images;
-        skeleton = s.skeleton;
-        sceneAnimationClip = s.sceneAnimationClip;
-        skins = s.skins;
-        activeSkinID = s.activeSkinID;
-        animationEvents = s.animationEvents;
-    }
+    void applySnapshot(const SceneSnapshot& s);
+
+    void normalizeOrder();
+    void syncImagesToHierarchy();
+    void removeBones(const std::vector<Uuid>& ids);
+    void rebuildHierarchyFromState();
+    std::string uniqueHierarchyName(const std::string& proposed, Uuid excluding) const;
+    std::string uniqueSkinName(const std::string& requested, std::optional<Uuid> excluding) const;
+    bool skinChainContains(Uuid start, Uuid target) const;
+    std::unordered_map<std::string, std::optional<Uuid>> setupAttachments() const;
+    void selectKeyframeAt(Uuid targetID, AnimationTrackProperty property, int frame);
 
     // The one place the three bone-selection fields are written. `order`
     // is authoritative: the set is its contents and the primary is its

@@ -105,6 +105,17 @@ public:
         return vertices.size() == 4 && uvs.size() == 4 && indices == quadIndices;
     }
 
+    // Every bone this mesh is skinned to: the bones it has an inverse bind
+    // matrix for, plus any bone a vertex weight names. (`Mesh.boundBoneIDs`.)
+    std::unordered_set<Uuid, UuidHash> boundBoneIDs() const {
+        std::unordered_set<Uuid, UuidHash> ids;
+        for (const auto& entry : boneInverseBindMatrices) ids.insert(entry.first);
+        for (const auto& influences : vertexBoneWeights) {
+            for (const VertexBoneWeight& influence : influences) ids.insert(influence.boneID);
+        }
+        return ids;
+    }
+
     Mesh duplicated(std::optional<std::string> newName = std::nullopt) const {
         Mesh next = *this;
         next.id = Uuid::generate();

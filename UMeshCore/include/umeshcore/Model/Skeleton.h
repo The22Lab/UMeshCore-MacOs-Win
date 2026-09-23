@@ -59,6 +59,13 @@ public:
         return it == bones_.end() ? nullptr : &it->second;
     }
 
+    // `skeleton.bones.removeValue(forKey:)`. Leaves `rootIDs` and any child
+    // still naming this bone as its parent alone -- the caller decides what
+    // happens to them, as `SceneManager.removeBones` does.
+    void removeBone(Uuid id) {
+        if (bones_.erase(id) > 0) rebuildChildrenIndex();
+    }
+
     // Every constraint regardless of concrete type, ready for evaluation.
     std::vector<const BoneConstraint*> allConstraints() const {
         std::vector<const BoneConstraint*> out;

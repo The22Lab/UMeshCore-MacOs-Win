@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-56 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+57 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1143,6 +1143,22 @@ mencione un variant, así que la recomendación original de la auditoría
 (accesores que *toman* el variant) no servía; está corregida en
 `bindings/swift/README.md`. 6 tests; la propiedad clave es que los cuatro
 casos que comparten payload `Vec2` no se colapsan.
+
+Hecho: **el núcleo estructural** de `EditorScene` (A1/A2 casi completas,
+A3 completa) — filas de jerarquía, orden de dibujo autorado/animado/
+resuelto, borrado con huérfanos, duplicado, reparentado, binding, claves de
+orden de dibujo, y skins/slots/attachments enteros. Implementación por área
+en `src/Editor/EditorScene*.cpp`. Con ello: `Editor/IKBuilder.h`
+(`IKBuilder.swift` completo) y `Core/NaturalCompare.h` (el orden del
+Finder, `localizedStandardCompare`; divergencia cosmética documentada para
+nombres no ASCII). 19 tests.
+
+**Dos bugs de Swift encontrados y arreglados** (detalle en
+`MIGRATION.md`): cada **undo borraba todas las claves de attachment** del
+proyecto (el prune de pistas trataba una pista de slot como un constraint
+muerto), y **"ordenar por profundidad de hueso" ordenaba al revés** (la
+lista va de delante hacia atrás; Swift ponía el antebrazo detrás del
+brazo). Ambos tests fallan con la conducta Swift puesta de vuelta.
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló

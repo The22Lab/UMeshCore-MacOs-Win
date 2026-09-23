@@ -68,14 +68,30 @@ Por área, en orden de dependencia:
 | Área | Qué | Estado |
 |---|---|---|
 | A0 | `Interop/SwiftBridge.h`: formas planas de los 3 variants, contenedores nombrados | ✅ |
-| A1 | Esqueleto y jerarquía: selección de huesos, `reparentBone`, `hierarchyItems` (mover/renombrar/borrar), `mirroredBone`/`mirrorBonePose`/`flipBonePose`, `duplicateSelected` | ⬜ |
-| A2 | Imágenes y orden de dibujo: `updateImage`, `updateVisibility`, `imagesInDrawOrder`, `moveImageInDrawOrder`/`nudge`/`sortDrawOrderByBoneDepth`, `bindImage`/`unbindBoneFromImage`/`autoBindImage`, `addImage`, `captureCurrentArrangement` | ⬜ |
-| A3 | Skins, slots, attachments (≈19 miembros) | ⬜ |
+| A1 | Esqueleto y jerarquía: selección de huesos, `reparentBone`, `hierarchyItems` (mover/renombrar/borrar), `mirroredBone`/`mirrorBonePose`/`flipBonePose`, `duplicateSelected` | 🔨 todo salvo el espejado |
+| A2 | Imágenes y orden de dibujo: `updateImage`, `updateVisibility`, `imagesInDrawOrder`, `moveImageInDrawOrder`/`nudge`/`sortDrawOrderByBoneDepth`, `bindImage`/`unbindBoneFromImage`/`autoBindImage`, `addImage`, `captureCurrentArrangement` | 🔨 todo salvo auto-bind |
+| A3 | Skins, slots, attachments (≈19 miembros) | ✅ |
 | A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ⬜ |
 | A5 | Animación: selección/copia/pegado/movimiento de keyframes, tangentes, interpolación, claves de transform/constraint/draw order/attachment/eventos, transporte (`togglePlayback`, `stepFrames`, rango, `timecode`) | ⬜ |
 | A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | ⬜ |
 | A7 | Scene: composiciones, capas, luces, claves de luz/cámara, `frameSceneView`, `alignSceneCameraToView`/`alignSceneViewToCamera` | ⬜ |
 | A8 | Persistencia: `ProjectDocument` ↔ `EditorScene` (el formato ya está portado; falta cablearlo al estado) | ⬜ |
+
+### Lo que salió portando (bugs de Swift arreglados, no replicados)
+
+- **Deshacer borraba todas las claves de attachment.** `pruneSceneAnimationTracks`
+  solo protege las pistas de dominio `.scene` y a todas las demás les pregunta
+  "¿eres de un constraint vivo?". Una pista de attachment es de un **slot**,
+  así que fallaba siempre — y el prune corre en cada `applySnapshot`, o sea en
+  cada undo. Test: `testUndoKeepsAttachmentKeys`.
+- **"Ordenar por profundidad de hueso" ordenaba al revés.** La lista de orden de
+  dibujo va de delante hacia atrás (índice 0 = delante; `MetalRenderer` y los
+  dos renderers de Scene la recorren `.reversed()` por eso). Swift ordena por
+  profundidad **ascendente**: sprites sueltos delante y el antebrazo **detrás**
+  del brazo — lo contrario de las tres cosas que su comentario promete. Test:
+  `testSortByBoneDepthPutsTheDeeperBoneInFront`.
+
+Los dos tests se comprobaron volviendo a poner la conducta Swift: fallan.
 
 Cada área: leer el Swift, portar a `EditorScene` (o un hermano si el área
 es grande), tests con valores derivados a mano. **Ningún archivo Swift se
