@@ -56,6 +56,8 @@
 #include "umeshcore/Animation/SceneAnimator.h"
 #include "umeshcore/Constraints/ConstraintAnimation.h"
 #include "umeshcore/Core/Uuid.h"
+#include "umeshcore/Constraints/PhysicsConstraintSystem.h"
+#include "umeshcore/Editor/IKBuilder.h"
 #include "umeshcore/Editor/UndoRedoManager.h"
 #include "umeshcore/Model/HierarchyItem.h"
 #include "umeshcore/Model/SceneImage.h"
@@ -598,6 +600,105 @@ public:
     void removeSkinInclusion(Uuid skinID, Uuid includedID);
     // Drop skin references to sprites that no longer exist.
     void pruneSkins();
+
+    // ---- Constraints (EditorSceneConstraints.cpp)
+
+    // The IK builder's live draft (nullopt = panel closed) and the bone the
+    // pointer is over while it picks.
+    std::optional<IKBuilderDraft> ikBuilder;
+    std::optional<Uuid> ikBuilderHoveredBoneID;
+
+    // The rig's own physics simulation -- per instance, never shared
+    // (ROADMAP risk #2). `isPhysicsPreviewActive` gates stepping it.
+    PhysicsConstraintSystem physics;
+    bool isPhysicsPreviewActive() const { return physics.isActive; }
+    // `isPhysicsPreviewActive.didSet`: switching it off resets the sim.
+    void setPhysicsPreviewActive(bool active);
+    void resetPhysicsSimulation();
+    // A STUB in Swift too (an empty body with a TODO): ported with the same
+    // effect, which is none. See EditorSceneConstraints.cpp.
+    void bakePhysicsToKeys();
+
+    void beginIKBuilder();
+    void cancelIKBuilder();
+    IKBuilderValidation ikBuilderValidation() const;
+    // True when the click was consumed by the builder's pick mode.
+    bool ikBuilderHandleBonePick(Uuid boneID);
+    void ikBuilderSetPicking(std::optional<IKBuilderSlot> slot);
+    void ikBuilderSetChain(const std::vector<Uuid>& chain);
+    void ikBuilderSetTarget(std::optional<Uuid> boneID);
+    void ikBuilderSetName(const std::string& name);
+    void ikBuilderSetBendPositive(bool value);
+    void ikBuilderSetMix(float value);
+    std::optional<Uuid> commitIKBuilder();
+
+    std::optional<Uuid> createPathConstraintFromSelection();
+    std::optional<Uuid> createTransformConstraintFromSelection();
+    std::optional<Uuid> createPhysicsConstraintFromSelection(PhysicsType type, PhysicsPreset preset);
+
+    void renameIKConstraint(Uuid id, const std::string& newName);
+    void deleteIKConstraint(Uuid id);
+    std::optional<Uuid> duplicateIKConstraint(Uuid id);
+    void moveIKConstraint(const std::vector<int>& fromOffsets, int toOffset);
+    void setIKTarget(Uuid constraintID, Uuid boneID);
+    void addBoneToIKChain(Uuid boneID, Uuid constraintID);
+    void removeBoneFromIKChain(Uuid boneID, Uuid constraintID);
+    void setIKChainFromSelection(Uuid constraintID);
+    // `updateIKConstraint(id) { ... }`: a Swift closure cannot cross, so the
+    // shell reads the constraint, edits its copy and hands it back. Same
+    // effect: one undo step, then re-animate. Matched by id.
+    void replaceIKConstraint(const IKConstraint& updated);
+
+    void renameTransformConstraint(Uuid id, const std::string& newName);
+    void deleteTransformConstraint(Uuid id);
+    std::optional<Uuid> duplicateTransformConstraint(Uuid id);
+    void moveTransformConstraint(const std::vector<int>& fromOffsets, int toOffset);
+    void addAffectedBone(Uuid boneID, Uuid constraintID);
+    void removeAffectedBone(Uuid boneID, Uuid constraintID);
+    void setTransformConstraintTarget(Uuid constraintID, Uuid boneID);
+
+    void renamePathConstraint(Uuid id, const std::string& newName);
+    void deletePathConstraint(Uuid id);
+    std::optional<Uuid> duplicatePathConstraint(Uuid id);
+    void addFollowerToPath(Uuid boneID, Uuid constraintID);
+    void removeFollowerFromPath(Uuid boneID, Uuid constraintID);
+    void setPathControlBonesFromSelection(Uuid constraintID);
+
+    void renamePhysicsConstraint(Uuid id, const std::string& newName);
+    void deletePhysicsConstraint(Uuid id);
+    std::optional<Uuid> duplicatePhysicsConstraint(Uuid id);
+    void setPhysicsChainFromSelection(Uuid constraintID);
+
+    void setConstraintEnabled(Uuid id, bool enabled);
+    void deleteConstraint(Uuid id);
+    std::optional<Uuid> duplicateConstraint(Uuid id);
+    void renameConstraint(Uuid id, const std::string& newName);
+    // Every bone except the ones this constraint already drives.
+    std::vector<Bone> targetCandidates(const std::vector<Uuid>& excludingDriven) const;
+
+    // ---- Constraint animation (EditorSceneConstraints.cpp)
+    void ensureConstraintSetupCaptured(Uuid constraintID);
+    void updateConstraintSetupValue(Uuid constraintID, AnimationTrackProperty property);
+    bool isConstraintPropertyAnimated(Uuid constraintID, AnimationTrackProperty property) const;
+    bool constraintPropertyHasKeyAtPlayhead(Uuid constraintID, AnimationTrackProperty property) const;
+    void restoreAllConstraintSetupValues();
+    void replaceSceneAnimation(const AnimationClip& clip,
+                               const std::unordered_map<Uuid, ConstraintSetupValues, UuidHash>& values);
+    bool hasAnyConstraintTrack(Uuid constraintID) const;
+    void removeAllConstraintTracks(Uuid constraintID);
+    float constraintScalarValue(Uuid constraintID, AnimationTrackProperty property) const;
+    bool constraintFlagValue(Uuid constraintID, AnimationTrackProperty property) const;
+    Vec2 constraintVectorValue(Uuid constraintID, AnimationTrackProperty property) const;
+    // The single entry point for a constraint edit: auto-keys in Animator,
+    // rewrites the authored value (and its setup record, if animated) in
+    // Editor. `pushUndo` is Swift's default-true parameter, spelled out.
+    void setConstraintScalar(Uuid constraintID, AnimationTrackProperty property, float value, bool pushUndo);
+    void setConstraintFlag(Uuid constraintID, AnimationTrackProperty property, bool value, bool pushUndo);
+    void setConstraintVector(Uuid constraintID, AnimationTrackProperty property, Vec2 value, bool pushUndo);
+    void keyConstraintProperty(Uuid constraintID, AnimationTrackProperty property);
+    void removeConstraintKeyAtPlayhead(Uuid constraintID, AnimationTrackProperty property);
+    void removeConstraintPropertyTrack(Uuid constraintID, AnimationTrackProperty property);
+    void restoreConstraintSetupValue(Uuid constraintID, AnimationTrackProperty property);
 
 private:
     bool interactionPushed_ = false;

@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-57 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+58 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1159,6 +1159,14 @@ proyecto (el prune de pistas trataba una pista de slot como un constraint
 muerto), y **"ordenar por profundidad de hueso" ordenaba al revés** (la
 lista va de delante hacia atrás; Swift ponía el antebrazo detrás del
 brazo). Ambos tests fallan con la conducta Swift puesta de vuelta.
+
+Hecho: **A4, constraints** — el IK builder vivo, crear/duplicar/borrar/
+renombrar/reordenar/re-apuntar los cuatro tipos, y la edición animada
+(auto-key en Animator, registro de setup en Editor). `bakePhysicsToKeys` es
+un stub vacío también en Swift y se porta igual. 8 tests. **Tercer bug de
+Swift**: el primer auto-key de un constraint **perdía el valor autorado**
+(se escribía antes de capturar el setup); arreglado, con test que falla con
+el orden de Swift.
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló

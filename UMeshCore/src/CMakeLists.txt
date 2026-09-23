@@ -53,6 +53,7 @@ add_library(umeshcore STATIC
     Editor/IKBuilder.cpp
     Editor/EditorSceneStructure.cpp
     Editor/EditorSceneSkins.cpp
+    Editor/EditorSceneConstraints.cpp
     Interop/SwiftBridge.cpp
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp

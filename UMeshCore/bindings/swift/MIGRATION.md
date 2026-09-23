@@ -71,7 +71,7 @@ Por área, en orden de dependencia:
 | A1 | Esqueleto y jerarquía: selección de huesos, `reparentBone`, `hierarchyItems` (mover/renombrar/borrar), `mirroredBone`/`mirrorBonePose`/`flipBonePose`, `duplicateSelected` | 🔨 todo salvo el espejado |
 | A2 | Imágenes y orden de dibujo: `updateImage`, `updateVisibility`, `imagesInDrawOrder`, `moveImageInDrawOrder`/`nudge`/`sortDrawOrderByBoneDepth`, `bindImage`/`unbindBoneFromImage`/`autoBindImage`, `addImage`, `captureCurrentArrangement` | 🔨 todo salvo auto-bind |
 | A3 | Skins, slots, attachments (≈19 miembros) | ✅ |
-| A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ⬜ |
+| A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ✅ |
 | A5 | Animación: selección/copia/pegado/movimiento de keyframes, tangentes, interpolación, claves de transform/constraint/draw order/attachment/eventos, transporte (`togglePlayback`, `stepFrames`, rango, `timecode`) | ⬜ |
 | A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | ⬜ |
 | A7 | Scene: composiciones, capas, luces, claves de luz/cámara, `frameSceneView`, `alignSceneCameraToView`/`alignSceneViewToCamera` | ⬜ |
@@ -91,7 +91,21 @@ Por área, en orden de dependencia:
   del brazo — lo contrario de las tres cosas que su comentario promete. Test:
   `testSortByBoneDepthPutsTheDeeperBoneInFront`.
 
-Los dos tests se comprobaron volviendo a poner la conducta Swift: fallan.
+- **El primer auto-key de un constraint en Animator perdía el valor autorado.**
+  `setConstraintScalar/Flag/Vector` escriben el valor nuevo **antes** de
+  capturar el registro de setup, así que el registro guarda el valor
+  *animado* — justo lo que el comentario de `ensureConstraintSetupCaptured`
+  dice evitar. Nada captura antes (verificado por grep): quitar todas las
+  claves después "restauraba" el valor animado. `keyConstraintProperty`, que
+  captura sin escribir, siempre lo hizo bien. Test:
+  `testAnEditAutoKeysInAnimatorAndKeepsTheSetupValue`.
+
+Los tres tests se comprobaron volviendo a poner la conducta Swift: fallan.
+
+**Closures de Swift que no cruzan.** `updateIKConstraint(id) { $0.x = … }`
+pasa a `replaceIKConstraint(valor)`: el adaptador lee, aplica su closure a
+la copia y la devuelve. Mismo efecto (un paso de undo y re-animar). Es el
+patrón para todos los `update…(id) { … }`.
 
 Cada área: leer el Swift, portar a `EditorScene` (o un hermano si el área
 es grande), tests con valores derivados a mano. **Ningún archivo Swift se
