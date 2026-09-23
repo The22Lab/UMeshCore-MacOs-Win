@@ -261,11 +261,10 @@ static void testFoldedOutlineIsRejected() {
     // reaches i=2's fold-back check. This is a genuine property of the
     // algorithm as written (loop order i=0,1,2,3, early-return on first
     // throw), not a transcription choice -- see the Python trace referenced
-    // in this port's commit message. Flagged for confirmation against the
-    // real Swift binary (this dev environment has no Xcode toolchain); until
-    // then this C++ port matches the algorithm's own logic rather than the
-    // Swift test's assertion, per UMeshCore/ROADMAP.md's port-the-algorithm
-    // (not the possibly-stale-test) priority.
+    // in this port's commit message. CONFIRMED against the real Swift binary:
+    // run in Xcode, the Swift test failed with exactly this --
+    // `.ringSelfIntersecting` where it expected `.ringFoldsBack` -- so the
+    // Swift test was stale and now asserts the same case as this one.
     std::vector<Vec2> points = {p(120, 0), p(30, 30), p(30, 90), p(0, 120)};
     bool threw = false;
     try {

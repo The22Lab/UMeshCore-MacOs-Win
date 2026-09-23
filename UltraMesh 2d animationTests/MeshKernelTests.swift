@@ -271,11 +271,21 @@ final class MeshKernelTests: XCTestCase {
         // transversally, so a proper-intersection test calls this simple — and
         // every triangulation of it silently loses vertex 3 along with its bone
         // weights and deform keyframes.
+        //
+        // The ring IS refused, but not by the fold check. `validateRing` walks
+        // i = 0, 1, 2, 3 and throws on the first hit. At i = 1, edge (1,2) and
+        // edge (3,0) are not adjacent, and vertex 2 sits exactly ON edge (3,0)
+        // (0, 2 and 3 are collinear), so `segmentsTouchOrCross` throws
+        // `.ringSelfIntersecting` before the loop reaches the fold at i = 2.
+        // This test used to expect `.ringFoldsBack` and failed on the Mac; the
+        // UMeshCore port had traced it by hand and asserts the same case
+        // (UMeshCore/tests/MeshKernelTests.cpp). What matters is that nothing
+        // is triangulated; which of the two checks gets there first is loop order.
         let points = [p(120, 0), p(30, 30), p(30, 90), p(0, 120)]
         XCTAssertThrowsError(
             try MeshKernel.triangulate(points: points, boundary: .init(outer: [0, 1, 2, 3]))
         ) { error in
-            XCTAssertEqual(error as? MeshKernel.Failure, .ringFoldsBack)
+            XCTAssertEqual(error as? MeshKernel.Failure, .ringSelfIntersecting)
         }
 
         // The half that proves the test is not vacuous: the weaker predicate
