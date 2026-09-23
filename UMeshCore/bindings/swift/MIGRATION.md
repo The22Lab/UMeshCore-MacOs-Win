@@ -74,8 +74,8 @@ Por área, en orden de dependencia:
 | A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ✅ |
 | A5 | Animación: selección/copia/pegado/movimiento de keyframes, tangentes, interpolación, claves de transform/constraint/draw order/attachment/eventos, transporte (`togglePlayback`, `stepFrames`, rango, `timecode`); los flags de modo de canvas, `leaveSpriteModes` y la escalera de Escape | ✅ |
 | A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | ⬜ |
-| A7 | Scene: composiciones, capas, luces, claves de luz/cámara, `frameSceneView`, `alignSceneCameraToView`/`alignSceneViewToCamera` | ⬜ |
-| A8 | Persistencia: `ProjectDocument` ↔ `EditorScene` (el formato ya está portado; falta cablearlo al estado) | ⬜ |
+| A7 | Scene: composiciones, capas, luces, claves de luz/cámara, `frameSceneView`, `alignSceneCameraToView`/`alignSceneViewToCamera` | ✅ |
+| A8 | Persistencia: `ProjectDocument` ↔ `EditorScene` (`restoreProject`, `projectDocumentFrom`, la validación `restored*()`) | ✅ |
 
 ### Lo que salió portando (bugs de Swift arreglados, no replicados)
 
@@ -114,7 +114,19 @@ Por área, en orden de dependencia:
   Tests: `testEventsFireWhilePlaying`,
   `testALoopWrapFiresTheEndOfTheOldLapThenTheStartOfTheNew`.
 
-Los cuatro tests se comprobaron volviendo a poner la conducta Swift: fallan.
+- **Abrir un proyecto conservaba el historial de undo del anterior.** El
+  `SceneManager` es un `let` de `AppState` que vive toda la sesión, y ni
+  `restoreProject` ni `AppState.restore` tocan su `undoRedoManager` (grep:
+  solo push/undo/redo). Undo tras Abrir devolvía los sprites del proyecto
+  anterior — con texturas que ya no están en el asset store. Test:
+  `testOpeningAProjectStartsAFreshHistory`.
+- **`pruneSceneSelection` no tenía ningún llamante.** Su comentario dice
+  que se llama "donde una escena se reemplaza entera — abrir, undo"; grep
+  encuentra solo la declaración. Deshacer "añadir luz" dejaba seleccionada
+  una luz inexistente. Ahora la llaman `applySnapshot` y `restoreProject`.
+  Test: `testUndoDropsASelectionWhoseLightIsGone`.
+
+Los seis tests se comprobaron volviendo a poner la conducta Swift: fallan.
 
 **Rarezas de Swift replicadas a propósito, con nota en el código:** el
 `didSet` de `projectFramesPerSecond` se dispara dos veces ante un valor

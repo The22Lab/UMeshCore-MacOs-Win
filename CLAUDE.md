@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-59 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+61 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1178,6 +1178,29 @@ pegado/duplicado de keyframes, eventos, los flags de modo de canvas con
 Swift**: los eventos **nunca se disparaban durante la reproducción** (solo
 al hacer scrub); arreglado, con test que falla con la conducta Swift.
 Detalle y rarezas replicadas en `MIGRATION.md`.
+
+Hecho: **A7, Scene** (`EditorSceneCompositing.cpp`) — composiciones,
+capas (plates con mapas adjuntos pero parallax apagado; mover = intercambiar
+**números**, no posiciones), luces colocadas donde se ven, la selección de
+Scene, cámara y luces muestreadas en un frame (todo cae al valor
+**autorado**, con clamps donde se muestrea), claves de luz/cámara, y las
+tres alineaciones vista/plano — `alignSceneViewToCamera` usa `cameraBasis`
+en vez de re-escribir "forward", y el test afirma que el ojo cae
+exactamente en el plano. 10 tests. **Hueco de Swift cerrado**:
+`pruneSceneSelection` no tenía llamantes; undo dejaba seleccionada una luz
+borrada.
+
+Hecho: **A8, persistencia** (`EditorSceneProject.cpp` +
+`ProjectDocument.cpp`) — `restoreProject` (un `RestoredProject` en vez de
+veinte parámetros con defaults, que no cruzan a Swift), `projectDocumentFrom`
+completo (ya no deja `playbackLoops`/fps/orden de dibujo/jerarquía/Scene en
+sus defaults), y la validación `restored*()` al abrir. 5 tests. **Quinto bug
+de Swift**: abrir un proyecto **no limpiaba el historial de undo**; undo
+tras abrir devolvía los sprites del proyecto anterior.
+
+Con A5, A7 y A8 hechos, lo que falta de la etapa A es el espejado de huesos
+(A1), la heurística de auto-bind (A2) y **A6, mesh** — la única área
+bloqueada por algo externo (el pipeline de alfa).
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló

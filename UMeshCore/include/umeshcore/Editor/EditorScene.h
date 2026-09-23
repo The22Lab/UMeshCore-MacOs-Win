@@ -58,6 +58,7 @@
 #include "umeshcore/Constraints/PhysicsConstraintSystem.h"
 #include "umeshcore/Editor/EditorEscape.h"
 #include "umeshcore/Editor/IKBuilder.h"
+#include "umeshcore/Editor/SceneViewport.h"
 #include "umeshcore/Editor/ToolType.h"
 #include "umeshcore/Editor/UndoRedoManager.h"
 #include "umeshcore/Model/HierarchyItem.h"
@@ -65,6 +66,9 @@
 #include "umeshcore/Model/SceneImage.h"
 #include "umeshcore/Model/Skeleton.h"
 #include "umeshcore/Model/Skin.h"
+#include "umeshcore/Render/SceneViewCamera.h"
+#include "umeshcore/Scene/SceneComposition.h"
+#include "umeshcore/Scene/SceneSelection.h"
 
 namespace umeshcore {
 
@@ -877,6 +881,125 @@ public:
     void fireEventsCrossed(int from, int to);
     void clearFiredEvents() { recentlyFiredEvents.clear(); }
 
+    // A click on the canvas is a paint stroke, not a pick, only with the
+    // brush on, a bone armed and a sprite to paint.
+    bool isWeightPaintStroke() const {
+        return meshWeightPaintEnabled && activeWeightPaintBoneID.has_value() && selectedImageID.has_value();
+    }
+
+    // ---- Opening a project (EditorSceneProject.cpp)
+    //
+    // Everything `SceneManager.restoreProject` takes, as one value (a
+    // twenty-parameter call with defaults does not cross to Swift). Filled
+    // by `applyProjectDocument`, which applies the file-level `restored*()`
+    // validation first; the selection fields come from the shell's
+    // `editorState`, which this port does not model.
+    struct RestoredProject {
+        std::vector<SceneImage> images;
+        Skeleton skeleton;
+        std::vector<HierarchyItem> hierarchyItems;
+        int currentFrame = 0;
+        bool playbackLoops = true;
+        int playbackStartFrame = 0;
+        int playbackEndFrame = 90;
+        std::optional<Uuid> selectedImageID;
+        std::vector<Uuid> selectedImageIDs;
+        std::optional<SelectedKeyframe> selectedKeyframe;
+        std::vector<SelectedKeyframe> selectedKeyframes;
+        AnimationClip sceneAnimationClip{"Scene"};
+        std::unordered_map<Uuid, ConstraintSetupValues, UuidHash> constraintSetupValues;
+        double projectFramesPerSecond = 30.0;
+        std::vector<Uuid> authoredDrawOrder;
+        std::vector<Skin> skins;
+        std::optional<Uuid> activeSkinID;
+        std::vector<AnimationEvent> animationEvents;
+        std::vector<SceneComposition> sceneCompositions;
+        std::optional<Uuid> selectedSceneCompositionID;
+        std::optional<SceneViewCamera> sceneViewCamera;
+    };
+    // Replaces the project wholesale (opening a file, or a new project).
+    void restoreProject(const RestoredProject& project);
+
+    // ---- Scene mode (EditorSceneCompositing.cpp)
+    //
+    // The project's Scenes -- staged sets of layers seen through a camera.
+    // Swift's `update…(id) { … }` closures become `replace…(value)`, as for
+    // constraints: the shell edits a copy and hands it back.
+
+    std::vector<SceneComposition> sceneCompositions;
+    std::optional<Uuid> selectedSceneCompositionID;
+    // Where the artist stands, and the front view's pan/zoom. Editor state:
+    // saved like a window position, never keyed, never exported.
+    SceneViewCamera sceneViewCamera;
+    SceneFrontView sceneFrontView;
+    // Scene's own loop flag: a cycle repeats, a shot ends.
+    bool sceneLoopsPlayback = true;
+    // ONE value, so a light and a card can never both look selected.
+    SceneSelection sceneSelection;
+
+    std::optional<Uuid> selectedSceneLightID() const { return sceneSelection.lightID(); }
+    std::optional<Uuid> selectedSceneLayerID() const { return sceneSelection.layerID(); }
+    // The selected Scene, or the first one when the id names none.
+    std::optional<SceneComposition> selectedSceneComposition() const;
+    std::optional<SceneLight> selectedSceneLight() const;
+
+    // Entering Scene mode with no Scene creates one (with the rig on it when
+    // there is a rig). Not undoable: it is the mode's ground state.
+    void ensureSceneCompositionExists();
+    // The funnel every Scene edit goes through: one undo entry (when asked),
+    // then the change, applied by id.
+    void replaceSceneComposition(const SceneComposition& updated, bool undoable);
+    // The focal plane, where one world unit is one rendered pixel.
+    static float defaultLayerZ(const SceneComposition& composition);
+
+    // An imported PNG as `addScenePlates` needs it: the three facts the
+    // Swift `TextureAsset` is read for, plus the relief maps the caller
+    // paired with it (Swift passes those as two dictionaries).
+    struct ScenePlateAsset {
+        Uuid assetID;
+        std::string name;
+        // False for `_n` / `_h` maps: a map is not a plate.
+        bool isPlaceable = true;
+        std::optional<Uuid> normalMapAssetID;
+        std::optional<Uuid> heightMapAssetID;
+    };
+    std::vector<Uuid> addScenePlates(const std::vector<ScenePlateAsset>& assets, Uuid compositionID);
+    void addSceneLayer(const SceneLayer& layer, Uuid compositionID);
+    void removeSceneLayer(Uuid layerID, Uuid compositionID);
+    void replaceSceneLayer(const SceneLayer& updated, Uuid compositionID, bool undoable);
+    // One step in DRAW ORDER: swaps the two layers' numbers, or their array
+    // slots when they share a number.
+    void moveSceneLayer(Uuid layerID, Uuid compositionID, bool forward);
+
+    void selectSceneLight(std::optional<Uuid> id);
+    void selectSceneLayer(std::optional<Uuid> id);
+    // Drop a selection whose subject is gone (undo, open).
+    void pruneSceneSelection();
+
+    std::optional<Uuid> addSceneLight(SceneLightKind kind, Uuid compositionID);
+    void replaceSceneLight(const SceneLight& updated, Uuid compositionID, bool undoable);
+    void removeSceneLight(Uuid lightID, Uuid compositionID);
+    // Lights apply in list order, so this is a real reordering.
+    void moveSceneLight(Uuid lightID, Uuid compositionID, bool forward);
+
+    // The shot and the lights at a Scene frame, every property falling back
+    // to its AUTHORED value (never a neutral one), clamped where sampled.
+    SceneCamera sceneCamera(const SceneComposition& composition, int frame) const;
+    std::vector<SceneLight> sceneLights(const SceneComposition& composition, int frame) const;
+
+    void keySceneLight(const SceneLight& light, int frame);
+    void removeSceneLightKey(Uuid lightID, int frame);
+    std::vector<int> sceneLightKeyFrames(Uuid lightID) const;
+    void keySceneCamera(const SceneComposition& composition, int frame);
+    void removeSceneCameraKey(int frame);
+    std::vector<int> sceneCameraKeyFrames() const;
+
+    // Put the SHOT where the artist stands (an edit, one undo entry); bring
+    // the set into view; stand where the shot is (navigation, no undo).
+    void alignSceneCameraToView(Uuid compositionID);
+    void frameSceneView(Uuid compositionID, std::optional<Uuid> layerID);
+    void alignSceneViewToCamera(Uuid compositionID);
+
 private:
     bool interactionPushed_ = false;
 
@@ -889,6 +1012,8 @@ private:
         s.skins = skins;
         s.activeSkinID = activeSkinID;
         s.animationEvents = animationEvents;
+        s.sceneCompositions = sceneCompositions;
+        s.selectedSceneCompositionID = selectedSceneCompositionID;
         return s;
     }
     void applySnapshot(const SceneSnapshot& s);
@@ -913,6 +1038,9 @@ private:
     void insertSelectedKeyframe(const SelectedKeyframe& selection);
     std::optional<Keyframe> resolveSelectedKeyframe(const SelectedKeyframe& selection) const;
     std::string uniqueEventName(const std::string& requested, std::optional<Uuid> excluding) const;
+    SceneComposition* composition(Uuid id);
+    SceneLight sampledSceneLight(const SceneLight& light, int frame) const;
+    std::vector<int> keyFramesFor(Uuid targetID) const;
     void collectEvents(int lower, int upper, std::vector<FiredAnimationEvent>& fired) const;
 
     // The one place the three bone-selection fields are written. `order`

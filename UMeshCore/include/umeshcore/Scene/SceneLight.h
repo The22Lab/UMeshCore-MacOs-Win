@@ -56,6 +56,18 @@ inline const char* sceneLightKindName(SceneLightKind kind) {
     return "point";
 }
 
+// The kind as the inspector names it -- and as a new light is named
+// ("Point 1", "Global 3"), which is why it is model-side. Not the file
+// spelling: `directional` shows as "Global".
+inline const char* sceneLightKindTitle(SceneLightKind kind) {
+    switch (kind) {
+        case SceneLightKind::kPoint: return "Point";
+        case SceneLightKind::kSpot: return "Spot";
+        case SceneLightKind::kDirectional: return "Global";
+    }
+    return "Point";
+}
+
 inline std::optional<SceneLightKind> sceneLightKindFromName(const std::string& name) {
     if (name == "point") return SceneLightKind::kPoint;
     if (name == "spot") return SceneLightKind::kSpot;

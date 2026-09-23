@@ -579,6 +579,14 @@ void EditorScene::applySnapshot(const SceneSnapshot& s) {
     skins = s.skins;
     activeSkinID = s.activeSkinID;
     animationEvents = s.animationEvents;
+    sceneCompositions = s.sceneCompositions;
+    selectedSceneCompositionID = s.selectedSceneCompositionID;
+    // Not in Swift, whose `pruneSceneSelection` says it is "called where a
+    // scene is replaced wholesale -- opening a project, undo" and has no
+    // call site at all (grep: its declaration is its only mention). Undoing
+    // the addition of a light left the light selected, and the gizmo over
+    // nothing. See EditorSceneCompositing.cpp.
+    pruneSceneSelection();
     selectedMeshVertexIndices.clear();
     selectedMeshInternalEdgeIndex = std::nullopt;
     pruneSceneAnimationTracks();

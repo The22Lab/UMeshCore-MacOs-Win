@@ -306,49 +306,74 @@ ProjectDocument projectDocumentFromJson(const JsonValue& j) {
 }
 
 ProjectDocument projectDocumentFrom(const EditorScene& scene, std::vector<AssetRecord> assets) {
+    // `AppState.currentProjectDocument`, minus what is not the scene's: the
+    // 2D camera and the animation library live on `AppState` in Swift and
+    // are the caller's to fill, and `editorState` is shell state carried in
+    // `unrecognized`.
     ProjectDocument document;
     document.currentFrame = scene.currentFrame;
-    document.playbackStartFrame = scene.playbackStartFrame;
-    document.playbackEndFrame = scene.playbackEndFrame;
+    document.playbackLoops = scene.playbackLoops;
+    // `SavedProjectDocument.init` clamps the range as it writes it.
+    document.playbackStartFrame = std::max(scene.playbackStartFrame, 0);
+    document.playbackEndFrame = std::max(scene.playbackEndFrame, document.playbackStartFrame);
     document.assets = std::move(assets);
     document.images = scene.images;
     document.skeleton = scene.skeleton;
+    document.hierarchyItems = scene.hierarchyItems;
     document.sceneAnimationClip = scene.sceneAnimationClip;
-    document.skins = scene.skins;
-    document.animationEvents = scene.animationEvents;
-    document.activeSkinID = scene.activeSkinID;
     document.constraintSetupValues = scene.constraintSetupValues;
-    // playbackLoops / projectFramesPerSecond / authoredDrawOrder are not
-    // modelled on EditorScene; they keep their defaults here. See the
-    // header -- a document READ from a file carries them through untouched.
-    //
-    // `hierarchyItems`, `camera` and `animations`/`activeAnimationID` are
-    // likewise left for the caller to fill, because they live OUTSIDE the
-    // scene here just as they do in Swift (the camera and the animation
-    // library belong to `AppState`, not `SceneManager`). Swift's own
-    // `AppState.restore` has the same shape: restore the scene, then the
-    // library, the camera and the rest separately.
+    document.projectFramesPerSecond = scene.projectFramesPerSecond;
+    document.authoredDrawOrder = scene.authoredDrawOrder;
+    document.skins = scene.skins;
+    document.activeSkinID = scene.activeSkinID;
+    document.animationEvents = scene.animationEvents;
+    document.sceneCompositions = scene.sceneCompositions;
+    document.selectedSceneCompositionID = scene.selectedSceneCompositionID;
+    // Tied to the compositions: nowhere to stand in a project with no set,
+    // and files stay byte-stable for projects that never touch Scene.
+    if (!scene.sceneCompositions.empty()) document.sceneViewCamera = scene.sceneViewCamera;
     return document;
 }
 
-void applyProjectDocument(const ProjectDocument& document, EditorScene& scene) {
-    scene.images = document.images;
-    scene.skeleton = document.skeleton;
-    scene.sceneAnimationClip =
+// `SavedProjectDocument`'s `restored*()` layer, then `restoreProject`. The
+// reader keeps what the FILE says; this is where a reference that no longer
+// resolves is dropped and an out-of-range rate falls back.
+EditorScene::RestoredProject restoredProject(const ProjectDocument& document) {
+    EditorScene::RestoredProject p;
+    p.images = document.images;
+    p.skeleton = document.skeleton;
+    p.hierarchyItems = document.hierarchyItems;
+    p.currentFrame = document.currentFrame;
+    p.playbackLoops = document.playbackLoops;
+    p.playbackStartFrame = document.playbackStartFrame;
+    p.playbackEndFrame = document.playbackEndFrame;
+    p.sceneAnimationClip =
         document.sceneAnimationClip.has_value() ? *document.sceneAnimationClip : AnimationClip("Scene");
-    scene.skins = document.skins;
-    scene.animationEvents = document.animationEvents;
-    scene.activeSkinID = document.activeSkinID;
-    scene.constraintSetupValues = document.constraintSetupValues;
-    scene.currentFrame = document.currentFrame;
-    scene.playbackStartFrame = document.playbackStartFrame;
-    scene.playbackEndFrame = document.playbackEndFrame;
-    // Loading replaces the scene wholesale, so nothing that pointed into
-    // the old one survives: selection, drag previews and undo history are
-    // all cleared, matching what opening a project does in the app.
-    scene.clearSelection();
-    scene.previewPositions.clear();
-    scene.undoRedo = UndoRedoManager();
+    p.constraintSetupValues = document.constraintSetupValues;
+    // Below 1 (or NaN, whose comparison is false) is "not set": the rate the
+    // editor used before this was a document property.
+    const double rate = document.projectFramesPerSecond.value_or(0.0);
+    p.projectFramesPerSecond = rate >= 1.0 ? std::min(rate, 240.0) : 30.0;
+    p.authoredDrawOrder = document.authoredDrawOrder;
+    p.skins = document.skins;
+    if (document.activeSkinID.has_value() &&
+        std::any_of(document.skins.begin(), document.skins.end(),
+                    [&](const Skin& s) { return s.id == *document.activeSkinID; })) {
+        p.activeSkinID = document.activeSkinID;
+    }
+    p.animationEvents = document.animationEvents;
+    p.sceneCompositions = document.sceneCompositions;
+    if (document.selectedSceneCompositionID.has_value() &&
+        std::any_of(document.sceneCompositions.begin(), document.sceneCompositions.end(),
+                    [&](const SceneComposition& c) { return c.id == *document.selectedSceneCompositionID; })) {
+        p.selectedSceneCompositionID = document.selectedSceneCompositionID;
+    }
+    p.sceneViewCamera = document.sceneViewCamera;
+    return p;
+}
+
+void applyProjectDocument(const ProjectDocument& document, EditorScene& scene) {
+    scene.restoreProject(restoredProject(document));
 }
 
 } // namespace umeshcore

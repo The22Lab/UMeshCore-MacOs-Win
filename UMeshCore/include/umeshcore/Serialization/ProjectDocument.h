@@ -102,12 +102,21 @@ ProjectDocument projectDocumentFromJson(const JsonValue& j);
 // `BinaryExporter` already uses.
 ProjectDocument projectDocumentFrom(const EditorScene& scene, std::vector<AssetRecord> assets);
 
-// Applies a manifest back onto a scene, MUTATING IT IN PLACE -- matching
-// Swift, where loading calls `SceneManager.restoreProject(...)` on the
-// existing instance rather than constructing a fresh one. Fields the
-// document carries but `EditorScene` does not model (see the struct) are
-// left on the document; they are not lost, just not represented in the
-// live scene yet.
+// Applying a manifest MUTATES THE SCENE IN PLACE, matching Swift, where
+// loading calls `SceneManager.restoreProject(...)` on the existing
+// instance. Since Phase 6a every model field round-trips through the scene;
+// what the scene does not own (the 2D camera, the animation library,
+// `editorState`) stays on the document for the caller.
+//
+// The file-level `restored*()` validation Swift applies on open: an active
+// skin or selected Scene that no longer resolves is dropped, and a missing
+// or sub-1 frame rate falls back to 30 (capped at 240). The selection
+// fields stay empty -- they live in the shell's `editorState`.
+EditorScene::RestoredProject restoredProject(const ProjectDocument& document);
+
+// Opens `document` into `scene`: `restoredProject`, then
+// `EditorScene::restoreProject` (which also clears undo history -- see
+// src/Editor/EditorSceneProject.cpp for why that is a fix).
 void applyProjectDocument(const ProjectDocument& document, EditorScene& scene);
 
 } // namespace umeshcore
