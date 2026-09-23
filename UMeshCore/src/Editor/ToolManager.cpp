@@ -1,5 +1,7 @@
 #include "umeshcore/Editor/ToolManager.h"
 
+#include "umeshcore/Editor/CanvasImagePicking.h"
+
 #include <algorithm>
 #include <cmath>
 #include <variant>
@@ -300,6 +302,27 @@ void ToolManager::updateBoneSelectionRect(const ToolInput& input, EditorScene& s
     std::optional<Uuid> primary = containsSelected ? scene.selectedBoneID : std::nullopt;
     if (!containsSelected && !ids.empty()) primary = ids.front();
     scene.setBoneSelection(ids, primary, input.isShiftPressed || input.isCommandPressed);
+}
+
+void ToolManager::handleMouseMove(const ToolInput& input, EditorScene& scene, const AssetAlphaStore& assets,
+                                  float hitScale, bool touchOptimized) {
+    handleMouseMove(input, scene, CanvasImagePicking::makeImageHitTest(scene, assets, hitScale), hitScale,
+                    touchOptimized);
+}
+void ToolManager::handleMouseDown(const ToolInput& input, EditorScene& scene, const AssetAlphaStore& assets,
+                                  float hitScale, bool touchOptimized) {
+    handleMouseDown(input, scene, CanvasImagePicking::makeImageHitTest(scene, assets, hitScale), hitScale,
+                    touchOptimized);
+}
+void ToolManager::handleMouseDrag(const ToolInput& input, EditorScene& scene, const AssetAlphaStore& assets,
+                                  float hitScale, bool touchOptimized) {
+    handleMouseDrag(input, scene, CanvasImagePicking::makeImageHitTest(scene, assets, hitScale), hitScale,
+                    touchOptimized);
+}
+void ToolManager::handleMouseUp(const ToolInput& input, EditorScene& scene, const AssetAlphaStore& assets,
+                                float hitScale, bool touchOptimized) {
+    handleMouseUp(input, scene, CanvasImagePicking::makeImageHitTest(scene, assets, hitScale), hitScale,
+                  touchOptimized);
 }
 
 } // namespace umeshcore

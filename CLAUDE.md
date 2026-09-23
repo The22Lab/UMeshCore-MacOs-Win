@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-65 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+66 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1244,8 +1244,16 @@ opaca rechaza todos los triángulos de un outline trazado y siempre cae al
 relleno sin filtrar (invisible: los triángulos del puente muestrean texels
 transparentes).
 
-Lo que falta de la etapa A: `MeshTool` (A6d) y el picking por alfa de
-`CanvasPicking` (con el mismo `AlphaMask`).
+Hecho: **picking por alfa** (`Editor/CanvasImagePicking.h`,
+`Editor/AssetAlphaStore.h`) — `CanvasPicking.imageHit` con sus tres pasadas
+(caja de los vértices dibujados, triángulo + UV baricéntrica + alfa, y
+alcance medido al arte, no a la hoja), y los `alphaAt`/`opaqueBounds` de
+`AssetManager` sobre `AlphaMask`. `ToolManager` tiene sobrecargas
+`handleMouse*(…, const AssetAlphaStore&, …)`: **Swift ya no necesita
+construir un `std::function`**, que era el último bloqueante de interop de
+la auditoría. 6 tests.
+
+Lo que falta de la etapa A: `MeshTool` (A6d).
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló

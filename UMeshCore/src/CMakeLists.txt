@@ -37,6 +37,7 @@ add_library(umeshcore STATIC
     Mesh/MeshTrace.cpp
     Editor/ToolUtilities.cpp
     Editor/CanvasPicking.cpp
+    Editor/CanvasImagePicking.cpp
     Editor/Tools/SelectTool.cpp
     Editor/Tools/MoveTool.cpp
     Editor/Tools/ScaleTool.cpp

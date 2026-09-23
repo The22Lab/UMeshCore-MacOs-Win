@@ -67,6 +67,7 @@
 #include <optional>
 #include <unordered_map>
 
+#include "umeshcore/Editor/AssetAlphaStore.h"
 #include "umeshcore/Editor/CanvasPicking.h"
 #include "umeshcore/Editor/EditorScene.h"
 #include "umeshcore/Editor/Tool.h"
@@ -109,6 +110,18 @@ public:
         const ToolInput& input, EditorScene& scene, const ImageHitTestFn& imageHitTest, float hitScale,
         bool touchOptimized);
     void update(EditorScene& scene);
+
+    // The same four, with sprites picked by alpha from `assets` -- the form
+    // a shell calls (Swift cannot build the `std::function` above; these
+    // bind `CanvasImagePicking::imageHit` into it here).
+    void handleMouseMove(const ToolInput& input, EditorScene& scene, const AssetAlphaStore& assets, float hitScale,
+                         bool touchOptimized);
+    void handleMouseDown(const ToolInput& input, EditorScene& scene, const AssetAlphaStore& assets, float hitScale,
+                         bool touchOptimized);
+    void handleMouseDrag(const ToolInput& input, EditorScene& scene, const AssetAlphaStore& assets, float hitScale,
+                         bool touchOptimized);
+    void handleMouseUp(const ToolInput& input, EditorScene& scene, const AssetAlphaStore& assets, float hitScale,
+                       bool touchOptimized);
 
 private:
     std::unordered_map<ActiveTool, std::unique_ptr<Tool>> tools_;

@@ -98,11 +98,24 @@ queda y la fachada se añade.
 
 Swift no puede pasar un closure donde se espera un `std::function`.
 
-**Forma recomendada**: una sobrecarga que tome un puntero a función C +
-`void* context`. Es el patrón que un shell nativo usa de todos modos, y
-`ImageHitTestFn` es *el* punto de inyección del pipeline de alfa que la
-Fase 2 dejó pendiente — así que esta decisión y aquella se toman juntas,
-no por separado.
+**Resuelto en Fase 6a, y no con punteros a función.** Lo que el callback
+inyectaba era *datos* (el alfa de una textura), así que ahora entran como
+datos: el shell rellena un `AssetAlphaStore` (id de asset → tamaño +
+`AlphaMask`) al decodificar cada textura, y `ToolManager` tiene
+sobrecargas `handleMouse*(input, scene, const AssetAlphaStore&, …)` que
+atan `CanvasImagePicking::imageHit` al `ImageHitTestFn` por dentro. Swift
+nunca construye un `std::function`. La recomendación original (puntero a
+función C + `void*`) habría funcionado, pero dejaba el muestreo en el lado
+Swift — dos implementaciones de "¿es opaco este píxel?", que es
+exactamente lo que `CanvasPicking.swift` dice que salió mal. El mismo
+`AlphaMask` alimenta Auto-Mesh (`Mesh::tracedHull`).
+
+Queda el parámetro `std::function` de `Render/SceneLighting.h`
+(`LightField::build`, el `worldAt` que interseca un píxel con el plano de
+la capa). Solo lo necesita un compositor de Scene en CPU que quiera usar
+la iluminación del core; si el de Swift pasa a hacerlo, la salida
+coherente con lo de arriba es la misma: pasar el plano y la proyección
+como datos, no un closure.
 
 ### 3. Bases con virtuales puras (3 sitios)
 

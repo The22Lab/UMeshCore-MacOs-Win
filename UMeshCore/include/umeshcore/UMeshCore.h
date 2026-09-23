@@ -88,6 +88,8 @@
 #include "umeshcore/Editor/Bounds2D.h"
 #include "umeshcore/Editor/CameraState.h"
 #include "umeshcore/Editor/CanvasActivity.h"
+#include "umeshcore/Editor/AssetAlphaStore.h"
+#include "umeshcore/Editor/CanvasImagePicking.h"
 #include "umeshcore/Editor/CanvasPicking.h"
 #include "umeshcore/Editor/EditorEscape.h"
 #include "umeshcore/Editor/EditorScene.h"
