@@ -59,6 +59,7 @@ add_library(umeshcore STATIC
     Editor/EditorSceneCompositing.cpp
     Editor/EditorSceneProject.cpp
     Editor/EditorSceneMirror.cpp
+    Editor/EditorSceneMesh.cpp
     Interop/SwiftBridge.cpp
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp

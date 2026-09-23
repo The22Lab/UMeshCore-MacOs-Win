@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-63 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+64 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1220,8 +1220,19 @@ vértice), aristas y caras manuales, clamps al hull, muestreo baricéntrico.
 recuperación de aristas, también en Swift), y el grid 3×3 declara solo las
 esquinas como outline (el validador lo marca).
 
-Lo que falta de la etapa A: las operaciones de mesh de `SceneManager` y
-auto-bind (A2/A6b), el trazado por alfa (A6c) y `MeshTool` (A6d).
+Hecho: **A6b + el resto de A2** (`EditorSceneMesh.cpp`) — las ~45
+operaciones de Mesh mode de `SceneManager`: trazado de outline (abierto
+hasta cerrarlo), vértices en Editor (malla de reposo) vs Animator (deform),
+borrar/insertar con las claves de deform **llevadas por el remap** o por la
+mezcla baricéntrica del triángulo que lo contenía, aristas/caras, bind/
+unbind/auto-weight, colores de hueso **derivados** de los meshes, el pincel
+de pesos (medido en espacio de mundo, estampado cada cuarto de radio), y
+**Auto Bind** con la regla de dos lados (un hueso se cede solo si otro
+sprite tiene el doble **y** este tiene uno que le encaja el doble). 8
+tests; el de Auto Bind reconstruye la escena del comentario Swift
+(torso/cinturón/brazo) y falla si se quita cualquiera de los dos lados.
+
+Lo que falta de la etapa A: el trazado por alfa (A6c) y `MeshTool` (A6d).
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló

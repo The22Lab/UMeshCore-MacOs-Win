@@ -69,11 +69,11 @@ Por área, en orden de dependencia:
 |---|---|---|
 | A0 | `Interop/SwiftBridge.h`: formas planas de los 3 variants, contenedores nombrados | ✅ |
 | A1 | Esqueleto y jerarquía: selección de huesos, `reparentBone`, `hierarchyItems` (mover/renombrar/borrar), `mirroredBone`/`mirrorBonePose`/`flipBonePose`, `duplicateSelected` | ✅ (con `mirrorMeshWeights`) |
-| A2 | Imágenes y orden de dibujo: `updateImage`, `updateVisibility`, `imagesInDrawOrder`, `moveImageInDrawOrder`/`nudge`/`sortDrawOrderByBoneDepth`, `bindImage`/`unbindBoneFromImage`/`autoBindImage`, `addImage`, `captureCurrentArrangement` | 🔨 todo salvo auto-bind |
+| A2 | Imágenes y orden de dibujo: `updateImage`, `updateVisibility`, `imagesInDrawOrder`, `moveImageInDrawOrder`/`nudge`/`sortDrawOrderByBoneDepth`, `bindImage`/`unbindBoneFromImage`/`autoBindImage`, `addImage`, `captureCurrentArrangement` | ✅ (auto-bind en A6b) |
 | A3 | Skins, slots, attachments (≈19 miembros) | ✅ |
 | A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ✅ |
 | A5 | Animación: selección/copia/pegado/movimiento de keyframes, tangentes, interpolación, claves de transform/constraint/draw order/attachment/eventos, transporte (`togglePlayback`, `stepFrames`, rango, `timecode`); los flags de modo de canvas, `leaveSpriteModes` y la escalera de Escape | ✅ |
-| A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | 🔨 A6a hecho: la mitad de edición de `Mesh` sin textura (`Mesh/MeshEditing.cpp`) |
+| A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | 🔨 A6a + A6b hechos: la mitad de edición de `Mesh` sin textura (`Mesh/MeshEditing.cpp`) y las ~45 operaciones de mesh/pesos/pincel/auto-bind de `SceneManager` (`EditorSceneMesh.cpp`). Falta: trazado por alfa (A6c) y `MeshTool` (A6d) |
 | A7 | Scene: composiciones, capas, luces, claves de luz/cámara, `frameSceneView`, `alignSceneCameraToView`/`alignSceneViewToCamera` | ✅ |
 | A8 | Persistencia: `ProjectDocument` ↔ `EditorScene` (`restoreProject`, `projectDocumentFrom`, la validación `restored*()`) | ✅ |
 

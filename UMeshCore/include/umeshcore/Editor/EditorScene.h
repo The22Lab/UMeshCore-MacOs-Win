@@ -507,10 +507,16 @@ public:
         }
         return selection;
     }
+    // As Swift, the new deform key becomes the selected key.
     std::optional<SelectedKeyframe> commitMeshDeformKeyframe(Uuid imageID) {
-        return umeshcore::commitMeshDeformKeyframe(
+        const std::optional<SelectedKeyframe> selection = umeshcore::commitMeshDeformKeyframe(
             skeleton, images, sceneAnimationClip, constraintSetupValues, isAnimationEditingEnabled, isPoseMode,
             animationTime, currentFrame, imageID, lastBoundImageRotation);
+        if (selection.has_value()) {
+            selectedKeyframes = {*selection};
+            selectedKeyframe = selection;
+        }
+        return selection;
     }
     // `SceneManager.applyAnimations`: runs the whole per-frame pass and
     // STORES the keyed draw order and attachments it decided, which is what
@@ -570,6 +576,120 @@ public:
     // Renames the row AND the sprite or bone it names. False when nothing
     // changed, so a blur with no edit pushes no undo.
     bool renameHierarchyItem(Uuid itemID, const std::string& proposed);
+
+    // ---- Mesh editing, weights and binding (EditorSceneMesh.cpp)
+    //
+    // `assetSize` is the sprite's texture size, which the shell's asset
+    // store knows and this does not (convention #2).
+
+    enum class MeshWeightPaintMode { Add, Subtract, Smooth, Replace, Blur };
+
+    // Mesh-mode state that model operations read (the purely visual toggles
+    // -- show triangles, dim, isolate -- stay with the shell).
+    bool isMeshCreatingHull = false;
+    bool meshShowDeformed = true;
+    bool meshSoftSelectionEnabled = false;
+    float meshSoftSelectionRadius = 90.0f;
+    float meshSoftSelectionFeather = 0.55f;
+    bool meshSoftSelectionExcludeHull = false;
+    float meshAutoDetail = 30.0f;
+    float meshAutoConcavity = 100.0f;
+    float meshAutoPadding = 1.2f;
+    float meshGenerateDensity = 30.0f;
+    MeshWeightPaintMode meshWeightPaintMode = MeshWeightPaintMode::Add;
+    float meshWeightBrushRadius = 52.0f;
+    float meshWeightBrushStrength = 0.55f;
+    float meshWeightBrushFalloff = 1.8f;
+    float meshWeightBrushInfluence = 1.0f;
+    int meshWeightMaxInfluencesPerVertex = 4;
+    // A ceiling on the stamps one drag event can produce.
+    static constexpr int kMaxPaintStampsPerDrag = 64;
+
+    // Outside Mesh mode the canvas shows the posed sprite, so everything that
+    // draws or measures the overlay asks this rather than the flag.
+    bool isMeshOverlayDeformed() const { return isMeshEditEnabled ? meshShowDeformed : true; }
+
+    void selectMeshInternalEdge(std::optional<int> index);
+    void addMeshVertexToSelection(int index) { selectedMeshVertexIndices.insert(index); }
+    void removeMeshVertexFromSelection(int index) { selectedMeshVertexIndices.erase(index); }
+
+    void beginNewMesh();
+    void finishNewMesh();
+    void updateMeshVertex(Uuid imageID, int vertexIndex, Vec2 localPosition);
+    void updateMeshUV(Uuid imageID, int vertexIndex, Vec2 uv);
+    std::optional<int> insertMeshVertex(Uuid imageID, Vec2 localPosition, int afterHullEdge);
+    std::optional<int> appendMeshHullVertex(Uuid imageID, Vec2 localPosition, Vec2 assetSize);
+    std::optional<int> insertMeshInteriorVertex(Uuid imageID, Vec2 localPosition, Vec2 assetSize);
+    void deleteSelectedMeshVertices();
+    void resetSelectedMesh(Vec2 assetSize);
+    void generateSelectedMesh(Vec2 assetSize);
+    void connectSelectedMeshVertices();
+    void connectMeshVertices(int first, int second);
+    void clearSelectedMeshEdges();
+    void createSelectedMeshFace();
+    void deleteSelectedMeshInternalEdge();
+    void constrainMeshInteriorVertices(Uuid imageID, Vec2 assetSize);
+
+    // Binding and weights.
+    std::vector<Uuid> boundBoneIDs(Uuid imageID) const;
+    void bindBoneToImage(Uuid imageID, Uuid boneID, Vec2 assetSize, int maxInfluences);
+    void unbindBoneFromImage(Uuid imageID, Uuid boneID, int maxInfluences);
+    void autoWeightMesh(Uuid imageID, int maxInfluences);
+    void autoWeightSelectedMesh(int maxInfluences);
+    bool skinImageToSkeleton(Uuid imageID, Vec2 assetSize, int maxInfluences);
+    void unskinImage(Uuid imageID);
+    // Gives every bound bone a colour and takes it back from every bone that
+    // is not. Idempotent.
+    void refreshBoneBindingColors();
+    struct InfluenceCount {
+        int boneCount = 0;
+        int vertexCount = 0;
+    };
+    InfluenceCount skinningInfluenceCount(Uuid imageID) const;
+    void setVertexWeights(Uuid imageID, int vertexIndex, const std::vector<VertexBoneWeight>& influences,
+                          int maxInfluences);
+    void clearMeshWeights(Uuid imageID);
+    void normalizeMeshWeights(Uuid imageID, int maxInfluences);
+    std::vector<VertexBoneWeight> selectedVertexInfluences(Uuid imageID) const;
+    void setSelectedVertexInfluence(Uuid imageID, Uuid boneID, float value);
+    // Puts weights back with no undo entry (a double click's first stamp,
+    // taken back). Refused on a vertex-count mismatch.
+    void restoreMeshWeights(Uuid imageID, const std::vector<std::vector<VertexBoneWeight>>& weights);
+
+    // Where the artist SEES each vertex (skinned if the overlay shows the
+    // deformed mesh), in the sprite's local frame.
+    std::vector<Vec2> skinnedLocalVertices(const SceneImage& image, Vec2 assetSize, bool showDeformed,
+                                           const Mesh& mesh) const;
+
+    // The weight brush, measured in WORLD space -- the frame the ring is
+    // drawn in and the pointer arrives in. nullopt parameters take the
+    // scene's brush settings.
+    void paintSelectedMeshWeights(Vec2 worldPoint, Vec2 assetSize);
+    void paintSelectedMeshWeights(Vec2 from, Vec2 to, Vec2 assetSize);
+    void paintMeshWeights(Uuid imageID, Uuid boneID, Vec2 assetSize, Vec2 worldPoint,
+                          std::optional<MeshWeightPaintMode> mode, std::optional<float> radius,
+                          std::optional<float> strength, std::optional<float> falloff);
+
+    // Auto Bind: which bones belong to a sprite, decided with the whole
+    // scene in view (see the .cpp for the two-sided rule).
+    static constexpr float kAutoBindMinBoneFraction = 0.25f;
+    static constexpr float kAutoBindMinCrossFraction = 0.60f;
+    static constexpr float kAutoBindDominance = 0.50f;
+    static constexpr float kAutoBindRivalFloor = 0.50f;
+    struct YieldedBone {
+        Uuid bone;
+        Uuid to;
+    };
+    struct AutoBindDecision {
+        std::vector<Uuid> bound; // best fit first
+        std::vector<YieldedBone> yielded;
+    };
+    AutoBindDecision autoBindDecision(Uuid imageID) const;
+    std::vector<Uuid> bonesOverlapping(Uuid imageID) const { return autoBindDecision(imageID).bound; }
+    // Replaces the sprite's bindings; binds, does not paint. Returns the
+    // number of bones bound (0: nothing lies over the sprite, nothing done).
+    int autoBindImage(Uuid imageID, Vec2 assetSize, int maxInfluences);
+    void autoBindSelectedImage(Vec2 assetSize, int maxInfluences);
 
     // ---- Mirroring (EditorSceneMirror.cpp)
     //
@@ -1045,6 +1165,10 @@ private:
     std::unordered_map<std::string, std::optional<Uuid>> setupAttachments() const;
     void selectKeyframeAt(Uuid targetID, AnimationTrackProperty property, int frame);
     void writeMirroredPose(Uuid boneID, const Transform3D2D& pose, bool includesScale);
+    void applyTopologyChange(const MeshTopologyChange& change, std::size_t imageIndex, Uuid imageID);
+    void extendDeformArrays(std::size_t imageIndex, Uuid imageID, const Mesh& previousMesh, int insertedIndex);
+    std::optional<std::size_t> imageIndex(Uuid id) const;
+    std::string autoBindSummary(const AutoBindDecision& decision) const;
 
     int playbackLowerBound(std::optional<int> fallback) const;
     int playbackUpperBound(std::optional<int> fallback, std::optional<int> minimum) const;
