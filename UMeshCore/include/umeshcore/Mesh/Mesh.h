@@ -7,7 +7,8 @@
 // behavior): at first `generated()`, the manual-face workflow and the
 // Auto-Bind bone fit. PHASE 6a PORTED THOSE (see "Editing" below and
 // src/Mesh/MeshEditing.cpp); what is still out is everything that reads a
-// texture's alpha (`tracedHull`, `constrainedToOpaqueArea`), and four
+// texture's alpha is ported too (`tracedHull`, in MeshTrace.cpp, reading
+// an `AlphaMask`); `constrainedToOpaqueArea` is not -- it has no caller. Four
 // private helpers with no caller in Swift (`insertingInteriorVertices`,
 // `edgeCrossesHullBoundary`, `triangleIntroducesCrossings`,
 // `circumcircleContains` -- the remains of an older triangulator; verified
@@ -29,6 +30,7 @@
 #include "umeshcore/Math/Mat4.h"
 #include "umeshcore/Math/MatrixUtilities.h"
 #include "umeshcore/Math/Vec.h"
+#include "umeshcore/Mesh/AlphaMask.h"
 #include "umeshcore/Mesh/MeshTypes.h"
 #include "umeshcore/Mesh/MeshValidator.h"
 
@@ -264,6 +266,13 @@ public:
     // hull fan) for callers that cannot refuse.
     std::vector<std::uint16_t> triangulatedIndicesWithInternalEdges() const;
 
+    // Auto-Mesh: follow the sprite's opaque silhouette (every connected shape,
+    // stitched into one ring) and fill it, dropping triangles that cross
+    // visible transparency. A fresh mesh; falls back to the quad when
+    // nothing is opaque. src/Mesh/MeshTrace.cpp.
+    Mesh tracedHull(const Vec2& size, const AlphaMask& alpha, float detail = 30.0f, float padding = 1.2f,
+                    float concavity = 100.0f, float alphaThreshold = 0.08f) const;
+
     // Even-odd containment (Swift's `pointInsideHull`, float arithmetic) and
     // distance-to-outline. Deliberately NOT the kernel's exact predicate:
     // the edit tools use this one in Swift.
@@ -295,6 +304,9 @@ private:
 
     std::vector<std::uint16_t> sanitizedTriangleIndices(const std::vector<std::uint16_t>& triangles) const;
     float hullSpan(const Vec2& direction) const;
+    std::vector<std::uint16_t> filterTrianglesToOpaqueArea(const std::vector<std::uint16_t>& triangles,
+                                                           const Vec2& size, const AlphaMask& alpha,
+                                                           float alphaThreshold, int minOpaqueSamples) const;
     Mesh generatedGrid(const Vec2& size, int subdivisions) const;
     Mesh meshWithRetriangulatedInteriorPoints(const std::vector<Vec2>& interiorPoints, const Vec2& size) const;
     std::vector<Vec2> sampledInteriorPoints(float spacing, int maxCount) const;

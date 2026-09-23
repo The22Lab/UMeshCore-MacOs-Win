@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-64 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+65 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1232,7 +1232,20 @@ sprite tiene el doble **y** este tiene uno que le encaja el doble). 8
 tests; el de Auto Bind reconstruye la escena del comentario Swift
 (torso/cinturón/brazo) y falla si se quita cualquiera de los dos lados.
 
-Lo que falta de la etapa A: el trazado por alfa (A6c) y `MeshTool` (A6d).
+Hecho: **A6c, Auto-Mesh** (`Mesh/MeshTrace.cpp`) — `tracedHull` con todo
+su pipeline (componentes conexas, borde de píxeles, suavizado, RDP,
+padding, filtro de concavidad, puentes con **anchura** entre formas, filtro
+de área opaca) y `EditorScene::traceSelectedMesh`. **El alfa llega como un
+`AlphaMask`** (valor plano que el shell rellena al decodificar), no como
+closure: cruza a Swift sin puntero a función y se testea con máscaras
+dibujadas a mano. 4 tests. Siete helpers privados de Swift sin llamantes no
+se portan. Un hallazgo más **pinned y sin arreglar**: el filtro de área
+opaca rechaza todos los triángulos de un outline trazado y siempre cae al
+relleno sin filtrar (invisible: los triángulos del puente muestrean texels
+transparentes).
+
+Lo que falta de la etapa A: `MeshTool` (A6d) y el picking por alfa de
+`CanvasPicking` (con el mismo `AlphaMask`).
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló

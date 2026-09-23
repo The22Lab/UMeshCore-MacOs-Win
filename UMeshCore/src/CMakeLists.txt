@@ -34,6 +34,7 @@ add_library(umeshcore STATIC
     Mesh/MeshValidator.cpp
     Mesh/Mesh.cpp
     Mesh/MeshEditing.cpp
+    Mesh/MeshTrace.cpp
     Editor/ToolUtilities.cpp
     Editor/CanvasPicking.cpp
     Editor/Tools/SelectTool.cpp

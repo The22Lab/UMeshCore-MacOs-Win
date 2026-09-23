@@ -73,7 +73,7 @@ Por área, en orden de dependencia:
 | A3 | Skins, slots, attachments (≈19 miembros) | ✅ |
 | A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ✅ |
 | A5 | Animación: selección/copia/pegado/movimiento de keyframes, tangentes, interpolación, claves de transform/constraint/draw order/attachment/eventos, transporte (`togglePlayback`, `stepFrames`, rango, `timecode`); los flags de modo de canvas, `leaveSpriteModes` y la escalera de Escape | ✅ |
-| A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | 🔨 A6a + A6b hechos: la mitad de edición de `Mesh` sin textura (`Mesh/MeshEditing.cpp`) y las ~45 operaciones de mesh/pesos/pincel/auto-bind de `SceneManager` (`EditorSceneMesh.cpp`). Falta: trazado por alfa (A6c) y `MeshTool` (A6d) |
+| A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | 🔨 A6a + A6b hechos: la mitad de edición de `Mesh` sin textura (`Mesh/MeshEditing.cpp`) y las ~45 operaciones de mesh/pesos/pincel/auto-bind de `SceneManager` (`EditorSceneMesh.cpp`). A6c hecho: trazado por alfa (`Mesh/MeshTrace.cpp`) leyendo un `AlphaMask` que decodifica el shell. Falta: `MeshTool` (A6d) |
 | A7 | Scene: composiciones, capas, luces, claves de luz/cámara, `frameSceneView`, `alignSceneCameraToView`/`alignSceneViewToCamera` | ✅ |
 | A8 | Persistencia: `ProjectDocument` ↔ `EditorScene` (`restoreProject`, `projectDocumentFrom`, la validación `restored*()`) | ✅ |
 
@@ -156,6 +156,22 @@ Los ocho tests se comprobaron volviendo a poner la conducta Swift: fallan.
   arista encima de él: el validador lo marca (I5). Así lo construye Swift;
   el render no lo nota, pero el indicador de salud del mesh sí debería. Se
   deja como está hasta confirmar en el Mac qué muestra la app.
+
+- El filtro de área opaca de Auto-Mesh **rechaza todos** los triángulos de
+  un outline trazado (sus aristas quedan sobre o justo fuera de los
+  píxeles opacos: el padding las pone ahí, y con padding 0 las aristas
+  derecha e inferior redondean al primer píxel transparente) y cae al
+  relleno sin filtrar. El comentario Swift dice que quita los triángulos
+  del puente entre formas; no lo hace. Son invisibles (muestrean texels
+  transparentes). Test: `testTwoShapesMakeOneRingThatStillTakesNodes`.
+
+**El alfa llega como valor, no como closure.** Swift pasa
+`alphaSampler: (Int, Int) -> Float`; el core recibe un `AlphaMask`
+(ancho, alto, alfas por fila desde arriba) que el shell rellena al
+decodificar la textura. Cruza a Swift sin puntero a función, se testea con
+máscaras dibujadas a mano, y el core no sabe qué es una textura. Es la
+respuesta al `std::function` que quedaba abierto en la auditoría: el mismo
+tipo servirá para el picking por alfa de `CanvasPicking` en A6d.
 
 **Rarezas de Swift replicadas a propósito, con nota en el código:** el
 `didSet` de `projectFramesPerSecond` se dispara dos veces ante un valor

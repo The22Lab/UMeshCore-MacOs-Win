@@ -6,8 +6,8 @@
 //
 // Ported from `Data/SceneManager.swift`, `selectMeshVertices` through
 // `deleteSelectedMeshVertices` / `extendDeformArrays`, including Auto Bind
-// and the weight brush. Not here: `traceSelectedMesh`, which reads the
-// sprite's alpha (next slice).
+// and the weight brush, and `traceSelectedMesh`, which reads the sprite's
+// alpha through an `AlphaMask` the shell decodes (Swift passes a closure).
 //
 // Notes on the port:
 //  - Swift passes `alphaSampler` / `assetSize` to `insertMeshVertex` and
@@ -484,6 +484,30 @@ void EditorScene::deleteSelectedMeshInternalEdge() {
                             m.manualTriangles.end());
     m.indices = m.triangulatedIndicesWithInternalEdges();
     selectedMeshInternalEdgeIndex = std::nullopt;
+}
+
+// `tracedHull` falls back to the plain rectangle when nothing is opaque
+// enough to follow; from the canvas shortcut, with the panel closed, that
+// read as a button doing the wrong thing -- so it is said.
+void EditorScene::traceSelectedMesh(Vec2 assetSize, const AlphaMask& alpha) {
+    if (!selectedImageID.has_value()) return;
+    const auto i = imageIndex(*selectedImageID);
+    if (!i.has_value()) return;
+    pushUndoState();
+    const Mesh traced = images[*i].mesh.tracedHull(assetSize, alpha, meshAutoDetail, meshAutoPadding, meshAutoConcavity);
+    images[*i].mesh = traced;
+    selectedMeshVertexIndices.clear();
+    isMeshCreatingHull = false;
+    if (traced.isQuadCompatible()) {
+        meshEditNotice = MeshEditNotice{
+            "Auto-Mesh found no outline to trace and fell back to the sprite's rectangle. Check the artwork has "
+            "opaque pixels, or trace it by hand with New Edge.",
+            true};
+    } else {
+        meshEditNotice =
+            MeshEditNotice{"Auto-Mesh traced " + std::to_string(traced.hullVertexIndices.size()) + " outline nodes.",
+                           false};
+    }
 }
 
 void EditorScene::constrainMeshInteriorVertices(Uuid imageID, Vec2 assetSize) {

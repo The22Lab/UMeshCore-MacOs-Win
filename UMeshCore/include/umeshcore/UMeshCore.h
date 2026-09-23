@@ -51,6 +51,7 @@
 
 // ---- Mesh ----
 // Mesh geometry, exact predicates and triangulation.
+#include "umeshcore/Mesh/AlphaMask.h"
 #include "umeshcore/Mesh/Mesh.h"
 #include "umeshcore/Mesh/MeshKernel.h"
 #include "umeshcore/Mesh/MeshPredicates.h"

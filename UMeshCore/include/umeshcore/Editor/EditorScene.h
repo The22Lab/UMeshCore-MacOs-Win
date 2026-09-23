@@ -629,6 +629,9 @@ public:
     void createSelectedMeshFace();
     void deleteSelectedMeshInternalEdge();
     void constrainMeshInteriorVertices(Uuid imageID, Vec2 assetSize);
+    // Auto-Mesh on the selected sprite, reading the alpha the shell decoded,
+    // and saying what happened (a fallback to the rectangle is a warning).
+    void traceSelectedMesh(Vec2 assetSize, const AlphaMask& alpha);
 
     // Binding and weights.
     std::vector<Uuid> boundBoneIDs(Uuid imageID) const;
