@@ -67,6 +67,15 @@ enum CoreUUID {
     /// payload (`makeOptionalUuid(false, _)` never reads it).
     static let zero = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
+    /// `UUID(core:)` under a name no other initializer competes with.
+    ///
+    /// From the test target, `UUID(core:)` did not resolve: the compiler
+    /// offered only `UUID()` ("argument passed to call that takes no
+    /// arguments") while `SIMD2<Float>(core:)` and `id.core` resolved
+    /// fine in the same file. A static function on a type this module owns
+    /// has one candidate and nothing to lose it to.
+    static func uuid(_ core: umeshcore.Uuid) -> UUID { UUID(core: core) }
+
     static func optional(_ core: umeshcore.OptionalUuid) -> UUID? {
         umeshcore.optionalHasUuid(core) ? UUID(core: umeshcore.optionalUuid(core)) : nil
     }

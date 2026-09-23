@@ -28,7 +28,8 @@ final class BridgeRoundTripTests: XCTestCase {
     func testUUIDKeepsItsByteOrder() {
         let id = UUID(uuidString: "01234567-89AB-CDEF-0011-223344556677")!
         XCTAssertEqual(String(id.core.toString()), id.uuidString)
-        XCTAssertEqual(UUID(core: id.core), id)
+        let back = CoreUUID.uuid(id.core)
+        XCTAssertEqual(back, id)
         XCTAssertEqual(CoreUUID.optional(CoreUUID.optional(nil as UUID?)), nil)
         XCTAssertEqual(CoreUUID.optional(CoreUUID.optional(id)), id)
         // The all-zero id is a value, not an absence.
@@ -271,12 +272,13 @@ final class BridgeRoundTripTests: XCTestCase {
         XCTAssertEqual(HierarchyItem(core: tree.core), tree)
 
         // "hat" is deliberately emptied; "shoe" is not mentioned. Different.
-        let skin = Skin(name: "Winter", attachments: ["hand": UUID(), "hat": .some(nil)],
+        let skin = Skin(name: "Winter", attachments: ["hand": UUID(), "hat": nil as UUID?],
                         includedSkinIDs: [UUID(), UUID()])
         let skinBack = Skin(core: skin.core)
         XCTAssertEqual(skinBack, skin)
         XCTAssertTrue(skinBack.attachments.keys.contains("hat"))
-        XCTAssertEqual(skinBack.attachments["hat"], .some(nil))
+        let hat: UUID?? = skinBack.attachments["hat"]
+        XCTAssertEqual(hat, Optional<UUID?>.some(nil))
         XCTAssertNil(skinBack.attachments["shoe"])
 
         let event = AnimationEvent(name: "footstep", defaultInt: 3, defaultFloat: 0.5,
@@ -299,7 +301,9 @@ final class BridgeRoundTripTests: XCTestCase {
 
         let skeleton = Skeleton(core: core.session.pointee.scene.skeleton)
         XCTAssertEqual(skeleton.bones.count, 1)
-        XCTAssertNotNil(skeleton.bones[UUID(core: id)])
-        XCTAssertEqual(skeleton.bones[UUID(core: id)]?.length ?? 0, 50, accuracy: 1e-4)
+        let boneID = CoreUUID.uuid(id)
+        let bone = skeleton.bones[boneID]
+        XCTAssertNotNil(bone)
+        XCTAssertEqual(bone?.length ?? 0, 50, accuracy: 1e-4)
     }
 }
