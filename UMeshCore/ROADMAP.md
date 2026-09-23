@@ -2001,6 +2001,126 @@ worked out BY HAND on paper, walking the same backward pass the algorithm
 itself uses, before the code was run even once; it passed on the first
 run. All 54 test binaries pass.
 
+### `Editor/SceneViewport.h/.cpp` -- the fourth bite, and the smallest
+
+Ports the portable math trapped inside `SceneViewportView.swift`'s
+(1,186 L) view body: viewport fit, pixel-budget application, and the
+pinch/depth-drag math for the Scene canvas. 14 tests.
+
+Smaller than the three pieces above it, and deliberately so: much of what
+looks like logic in this file -- picking, gizmo hit-testing, projection --
+already delegates to code Phases 2/4/5 finished (`SceneProjection`,
+`SceneViewCamera`, `SceneRenderBudget`, `SceneGizmoDrag::convexContains`),
+reused here as-is rather than re-derived. The extraction is small
+precisely because the earlier phases already did their job; that is worth
+recording as a positive result of the ordering this port has followed
+throughout, not a gap.
+
+**Closes a gap along the way.** `SceneFrontView`
+(`Data/Scene/SceneComposition.swift:147-165`) is real editor state -- the
+front (shot) view's pan and zoom, saved with the project, never
+keyframed, never exported, the same category as `SceneViewCamera` -- and
+`Scene/SceneComposition.h`'s own header comment already claimed it was
+"already ported, in `Render/SceneViewCamera.h`". It was not: grepped,
+zero hits anywhere in `include/` or `src/` besides that one stale line.
+It ports here for real (16 lines in Swift: `pan`, `zoom`, `zoomBy`,
+`isIdentity`, a clamped `minZoom`/`maxZoom`), and the stale comment is
+corrected to point here instead.
+
+What ports, matched to the Swift function it replaces:
+
+- `fittedRect()` -- where the rendered image sits in the viewport: scaled
+  uniformly to fit and centred, then the front view's pan and zoom laid
+  on top. Picking maps view points through this, so a click lands on the
+  pixel the artist SEES, not the pixel the renderer wrote. Flying has a
+  real camera already, so `isFlying` short-circuits before any of
+  `frontView` is read -- applying both would be two navigations fighting
+  over one set of fingers.
+- `viewPointFromImage()` / `imagePointFromView()` -- image pixels and
+  view points, declared beside each other because they must stay exact
+  inverses: getting one wrong is a click landing somewhere other than
+  where the thing is drawn, wrong by the display scale factor on a
+  Retina Mac or an iPad.
+- `renderPixelSize()` -- applies the already-ported `SceneRenderBudget`
+  ladder to a viewport. The front view follows the shot's aspect; the fly
+  view caps by its longest side; a gesture in flight uses the smaller
+  "interactive" ceiling in both cases. Capped in PIXELS, never in points
+  -- capping in points is the bug the Swift header itself calls out: it
+  made a large window render worse than a small one, because the same
+  pixel budget was being stretched over more points before the cap even
+  applied.
+- `integerPixels()` -- the guard before a pixel size becomes integers.
+  Swift's `Int(_: Float)` TRAPS on NaN, on an infinity, and on anything
+  past `Int.max` -- it does not clamp, it crashes the process. NaN
+  reaches this function more easily than it looks: `renderPixelSize`
+  computes the shot's aspect as `x / max(y, 1)`, and Swift's `max`
+  returns its FIRST argument when the comparison is false -- which every
+  comparison with NaN is -- so `max(NaN, 1)` is NaN, straight through the
+  guard that looks like it stops it.
+- `pinchZoomFrontView()` -- the front view's anchor-preserving zoom: zoom
+  toward the pointer so whatever the artist is looking at stays under
+  their fingers instead of sliding away while they zoom in on it. (The
+  fly camera's own pinch, a dolly, was already ported --
+  `SceneViewCamera::dolly` -- this covers only the front-view branch,
+  which needs `fittedRect` computed before and after the zoom to find
+  where the anchor landed and correct the pan.)
+- `depthDragZ()` -- the Shift-drag-in-depth math: a vertical screen delta
+  scaled by the card's distance from the camera so the gesture feels the
+  same near and far, clamped to stay past the camera's near plane.
+
+**A divergence worth spelling out, because it is easy to get backwards
+without noticing.** The port replicates Swift's `max(v, 1)` exactly --
+`(1.0f >= v) ? 1.0f : v` -- rather than the more natural-looking
+`v > 1.0f ? v : 1.0f`. The two differ only on NaN, which is exactly the
+case that matters: Swift's `max(x, y)` is `y >= x ? y : x`, so
+`max(NaN, 1)` compares `1 >= NaN` (false, every NaN comparison is) and
+returns the FIRST argument -- NaN, propagated. A naive `v > 1 ? v : 1`
+instead compares `NaN > 1` (also false) and returns the literal `1`,
+silently laundering the NaN into a finite denominator before
+`integerPixels` ever gets a chance to catch it. Getting this backwards
+would not fail any test that only checks ordinary inputs; it would only
+fail the one built specifically to catch it
+(`testRenderPixelSizePropagatesANaNCompositionHeightRatherThanSwallowingIt`),
+which feeds a NaN composition height through and asserts the output is
+still NaN, not a plausible-looking finite number.
+
+What does NOT port, and why:
+
+- `contains()` (Swift: point-in-convex-polygon) is NOT re-ported. It is a
+  byte-for-byte re-derivation of `umeshcore::convexContains`, already
+  ported for the gizmo's own hit-testing (`Editor/SceneGizmoDrag.h/.cpp`).
+  Porting it again as "new" code would have been exactly the
+  two-transcriptions-of-one-predicate failure this port already caught
+  once, in `ArcMath` (Phase 4, piece 6). A shell's card-pick loop should
+  call `convexContains` directly on each `LayerQuad`'s corners.
+- Everything that touches `SceneFrameRenderer`/`SceneMetalRenderer`
+  (`lightMarkers`, `layerQuads`, `metalFrame`, `frustumGeometry`,
+  `pickedLight`, `pickedLayer`) is renderer-OUTPUT glue, not portable
+  math -- and Phase 4's "what NOT to port from `Render/`" already
+  excludes the renderers themselves.
+- `navigate()`'s orbit-vs-pan dispatch is a three-line `if fingers >= 2`
+  over `SceneViewCamera::orbit`/`pan` (already ported) and
+  `SceneFrontView::pan` (ported here) -- too thin to be worth a
+  dedicated function.
+- `beginCardDrag`/`updateCardDrag`/`selectWhatever` touch the god object
+  (`SceneManager`) directly for selection and undo, per Named Risk #1's
+  rule. The one line of real math inside them
+  (`position = drag.startPosition + (nowWorld - startWorld)`) is trivial
+  vector arithmetic over the already-ported
+  `SceneProjection::unprojectOntoPlaneZ` -- not worth a function either.
+
+Tested: `tests/SceneViewportTests.cpp` (14 tests), every expected value
+worked out by hand against the ported formulas before the code ran --
+the letterbox fit of a 1000x500 image into a 400x400 view, the front
+view's pan/zoom applied on top of it, the pixel-budget ladder's output
+for four hand-picked view/aspect/provisional combinations, and the
+near-plane clamp on a depth drag large enough to have crossed it. The
+pinch tests assert the property directly -- the image pixel under a
+fixed anchor point does not move (to within half a pixel) across eight
+zoom steps, on-center and off-center both -- rather than re-deriving the
+pan correction the way `GraphViewport`'s own zoom-anchor test does. All
+55 test binaries pass.
+
 ## Named risks
 
 1. **`SceneManager.swift` god-object** (7,376 lines, 87 `@Published`

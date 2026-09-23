@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-54 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+55 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -345,11 +345,99 @@ afirma las doce filas completas —profundidad, líneas de continuidad,
 papel**, siguiendo la misma pasada hacia atrás que hace el propio
 algoritmo, no contra lo que produjo el port al ejecutarse.
 
+**`Editor/SceneViewport.h/.cpp`** ← la matemática portable de
+`SceneViewportView.swift` (1186 L), el canvas de Scene: encaje del
+viewport, aplicación del presupuesto de píxeles, y el pinch/drag-en-
+profundidad. 14 tests.
+
+Cuarta mordida de la deuda de Riesgo #6, y la más pequeña de las cuatro —
+a propósito: mucho de lo que en este archivo *parece* lógica (picking,
+hit-test de gizmo, proyección) ya delega en código que las Fases 2/4/5
+cerraron — `SceneProjection`, `SceneViewCamera`, `SceneRenderBudget`,
+`SceneGizmoDrag::convexContains` — así que la extracción es pequeña
+precisamente porque las fases anteriores ya hicieron su trabajo.
+
+Cierra un hueco de paso: `SceneFrontView` (`Data/Scene/
+SceneComposition.swift:147-165`, el pan/zoom de la vista frontal) es
+estado de editor real — igual que `SceneViewCamera`, se guarda con el
+proyecto, nunca se anima, nunca se exporta — y el propio comentario de
+`Scene/SceneComposition.h` afirmaba que ya estaba portado "en
+`Render/SceneViewCamera.h`". No lo estaba: verificado por grep, cero
+resultados en todo `include/`/`src/` salvo esa línea. Se porta aquí de
+verdad, y el comentario queda corregido para apuntar a este archivo.
+
+Lo que porta, y por qué:
+
+- `fittedRect()` — dónde se sitúa la imagen renderizada en el viewport:
+  encajada y centrada, y con el pan/zoom de la vista frontal encima. El
+  picking pasa por esta función, así que un clic cae sobre el píxel que el
+  artista **ve**, no el que el renderer escribió.
+- `viewPointFromImage()`/`imagePointFromView()` — píxel de imagen ↔ punto
+  de vista, declaradas juntas porque tienen que seguir siendo inversas
+  exactas la una de la otra: equivocarse en una es un clic que cae en otro
+  sitio del que se dibujó, y en una pantalla Retina o un iPad se equivoca
+  por el factor de escala entero.
+- `renderPixelSize()` — aplica la escalera ya portada de
+  `SceneRenderBudget` a un viewport: la vista frontal sigue el aspecto del
+  shot, la vista de vuelo se capa por su lado más largo, y un gesto en
+  vuelo usa el techo "interactivo", menor, en ambos casos.
+- `integerPixels()` — la guarda documentada antes de convertir un tamaño
+  en enteros. `Int(_: Float)` de Swift **trapea** ante NaN, ante un
+  infinito o ante cualquier cosa más allá de `Int.max` — no satura, mata
+  el proceso. Y un NaN llega aquí más fácil de lo que parece:
+  `renderPixelSize` calcula el aspecto del shot como `x / max(y, 1)`, y el
+  `max` de Swift devuelve su **primer** argumento cuando la comparación es
+  falsa — que es toda comparación con NaN —, así que `max(NaN, 1)` es NaN,
+  atravesando limpio la guarda que parece detenerlo. La guarda de C++ es
+  igual de necesaria, por una razón distinta: aquí un cast float→int fuera
+  de rango es comportamiento indefinido en vez de un crash controlado.
+- `pinchZoomFrontView()` — el zoom de la vista frontal que preserva el
+  ancla: hace zoom **hacia el puntero**, para que lo que el artista está
+  mirando siga bajo sus dedos en vez de deslizarse mientras se acerca.
+- `depthDragZ()` — el arrastre en profundidad con Shift: un delta vertical
+  de pantalla escalado por la distancia de la carta a la cámara, para que
+  el gesto se sienta igual cerca y lejos, capado para no cruzar el
+  near-plane.
+
+**Se replicó a propósito el `max(v, 1)` de Swift, no un `v > 1 ? v : 1`
+ingenuo.** Los dos difieren exactamente en NaN — que es el caso que
+`integerPixels` existe para atrapar. Un test lo prueba de forma directa:
+una composición con una altura NaN hace que `renderPixelSize` devuelva NaN
+(no un aspecto sustituto silencioso), reproduciendo el escenario que el
+comentario del archivo describe.
+
+Lo que **no** se porta, y por qué:
+
+- `contains()` (Swift) — el test de punto-en-polígono-convexo — **no** se
+  vuelve a portar: es una re-derivación byte a byte de
+  `umeshcore::convexContains`, ya portado en `Editor/SceneGizmoDrag.h/.cpp`
+  para el hit-test del propio gizmo. Portarlo de nuevo como código "nuevo"
+  habría sido exactamente el fallo de dos transcripciones de un mismo
+  predicado que este port ya atrapó una vez, en `ArcMath` (Fase 4, pieza
+  6). Un llamante debe usar `convexContains` directamente sobre las
+  esquinas de cada `LayerQuad`.
+- Todo lo que toca `SceneFrameRenderer`/`SceneMetalRenderer`
+  (`lightMarkers`, `layerQuads`, `metalFrame`, `frustumGeometry`,
+  `pickedLight`, `pickedLayer`) es pegamento sobre la **salida** del
+  renderer, no matemática portable — y el renderer en sí ya está excluido
+  del port (Fase 4, "Qué NO portar de `Render/`").
+- El despacho orbit-vs-pan de `navigate()` son tres líneas sobre
+  `SceneViewCamera::orbit`/`pan` (ya portados) y `SceneFrontView::pan`
+  (portado aquí) — demasiado fino para merecer una función propia.
+- `beginCardDrag`/`updateCardDrag`/`selectWhatever` tocan el god object
+  (`SceneManager`) directamente para selección y undo (convención #2). Su
+  única línea de matemática real
+  (`position = drag.startPosition + (nowWorld - startWorld)`) es
+  aritmética vectorial trivial sobre `SceneProjection::unprojectOntoPlaneZ`,
+  ya portado — tampoco merece función propia.
+
 Falta de la deuda SwiftUI: de `TimelineView.swift` (4326 L) queda lo que es
 cuerpo de vista de verdad (gestos, Paths, colores, llamadas a
 `sceneManager`); de `HierarchyView.swift` (1087 L) queda el resto: cómo
 dibuja cada fila, drag-and-drop, el diálogo de borrado, el foco del campo
-de renombrado.
+de renombrado; de `SceneViewportView.swift` (1186 L) queda el cuerpo de
+vista propiamente dicho: `body`, la tira de herramientas del gizmo, los
+controles de navegación, y todo lo que delega en `SceneFrameRenderer`.
 `ringFrame` y las constantes de geometría que el mesh builder del gizmo
 necesita ya están extraídas a `Render/SceneGizmoLayout.h` (Fase 4, pieza
 5). Lo que queda de matemática real de hit-testing y curvas **dentro de

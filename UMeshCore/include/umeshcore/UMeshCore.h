@@ -98,6 +98,7 @@
 #include "umeshcore/Editor/SceneGizmoDrag.h"
 #include "umeshcore/Editor/SceneGizmoState.h"
 #include "umeshcore/Editor/SceneLightGizmo.h"
+#include "umeshcore/Editor/SceneViewport.h"
 #include "umeshcore/Editor/SkewGizmoMetrics.h"
 #include "umeshcore/Editor/TimelineGraphMath.h"
 #include "umeshcore/Editor/Tool.h"

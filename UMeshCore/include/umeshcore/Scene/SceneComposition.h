@@ -4,13 +4,17 @@
 // `Data/Scene/SceneComposition.swift` -- a scene: some layers at some
 // depths, seen through a camera.
 //
-// (`SceneViewCamera` and `SceneFrontView` live in the same Swift file and
-// are already ported, in `Render/SceneViewCamera.h`. They are EDITOR
-// STATE -- saved with the project the way a window position is, never
-// keyframed, never exported -- while everything here is scene data. The
-// Swift file keeps them together; this port keeps them apart, because the
-// line between "renders" and "does not render" is the one that matters
-// when a Windows shell has to decide what to persist.)
+// (`SceneViewCamera` and `SceneFrontView` live in the same Swift file.
+// `SceneViewCamera` is already ported, in `Render/SceneViewCamera.h`.
+// `SceneFrontView` -- corrected in Phase 6a, this comment used to claim it
+// was ported there too and it was not -- is ported in
+// `Editor/SceneViewport.h` instead, beside the viewport-fit math that
+// reads it, the same file that closed the gap. Both are EDITOR STATE --
+// saved with the project the way a window position is, never keyframed,
+// never exported -- while everything here is scene data. The Swift file
+// keeps them together; this port keeps them apart, because the line
+// between "renders" and "does not render" is the one that matters when a
+// Windows shell has to decide what to persist.)
 //
 // A project can hold several compositions -- a walk cycle staged three
 // ways, or three shots of one film -- so they are a LIST with a selection,
