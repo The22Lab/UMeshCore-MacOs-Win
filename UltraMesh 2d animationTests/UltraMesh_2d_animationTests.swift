@@ -6,7 +6,7 @@
 //
 
 import XCTest
-@testable import UltraMesh_2d_animation
+@testable import UltraMesh
 
 final class UltraMesh_2d_animationTests: XCTestCase {
 

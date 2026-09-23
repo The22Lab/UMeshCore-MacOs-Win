@@ -1,6 +1,6 @@
 import XCTest
 import simd
-@testable import UltraMesh_2d_animation
+@testable import UltraMesh
 
 /// The Swift side of the meshing verification.
 ///
