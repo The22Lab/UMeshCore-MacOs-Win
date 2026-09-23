@@ -68,7 +68,7 @@ Por área, en orden de dependencia:
 | Área | Qué | Estado |
 |---|---|---|
 | A0 | `Interop/SwiftBridge.h`: formas planas de los 3 variants, contenedores nombrados | ✅ |
-| A1 | Esqueleto y jerarquía: selección de huesos, `reparentBone`, `hierarchyItems` (mover/renombrar/borrar), `mirroredBone`/`mirrorBonePose`/`flipBonePose`, `duplicateSelected` | 🔨 todo salvo el espejado |
+| A1 | Esqueleto y jerarquía: selección de huesos, `reparentBone`, `hierarchyItems` (mover/renombrar/borrar), `mirroredBone`/`mirrorBonePose`/`flipBonePose`, `duplicateSelected` | ✅ (con `mirrorMeshWeights`) |
 | A2 | Imágenes y orden de dibujo: `updateImage`, `updateVisibility`, `imagesInDrawOrder`, `moveImageInDrawOrder`/`nudge`/`sortDrawOrderByBoneDepth`, `bindImage`/`unbindBoneFromImage`/`autoBindImage`, `addImage`, `captureCurrentArrangement` | 🔨 todo salvo auto-bind |
 | A3 | Skins, slots, attachments (≈19 miembros) | ✅ |
 | A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ✅ |
@@ -126,7 +126,21 @@ Por área, en orden de dependencia:
   una luz inexistente. Ahora la llaman `applySnapshot` y `restoreProject`.
   Test: `testUndoDropsASelectionWhoseLightIsGone`.
 
-Los seis tests se comprobaron volviendo a poner la conducta Swift: fallan.
+- **"Flip" y "Pose → partner" no hacían nada fuera del modo Pose.**
+  Escriben solo `localTransform` y llaman `applyAnimations()`, que en
+  Editor devuelve cada hueso a su `baseTransform` y en Animator re-muestrea
+  el clip encima. Ahora siguen la regla de todos los setters de hueso:
+  Editor escribe el setup, Animator keya los canales cambiados. Test:
+  `testFlipSticksInEditorMode`.
+- **Un nombre con una palabra parecida a un marcador no encontraba pareja.**
+  `arm_lower_L` contiene "_l" (de "_lower"), se lee como `arm_rower_L` y
+  se rinde. Ahora se prueban todos los marcadores en el orden de Swift y
+  gana el primero que nombra un hueso (donde Swift encontraba pareja, es
+  la misma). Y la convención `L_arm` que el comentario Swift promete y su
+  tabla no tenía, anclada al inicio y probada al final. Test:
+  `testAMarkerLikeWordDoesNotHideThePartner`.
+
+Los ocho tests se comprobaron volviendo a poner la conducta Swift: fallan.
 
 **Rarezas de Swift replicadas a propósito, con nota en el código:** el
 `didSet` de `projectFramesPerSecond` se dispara dos veces ante un valor

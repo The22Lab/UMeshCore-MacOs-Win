@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-61 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+62 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1198,9 +1198,15 @@ sus defaults), y la validación `restored*()` al abrir. 5 tests. **Quinto bug
 de Swift**: abrir un proyecto **no limpiaba el historial de undo**; undo
 tras abrir devolvía los sprites del proyecto anterior.
 
-Con A5, A7 y A8 hechos, lo que falta de la etapa A es el espejado de huesos
-(A1), la heurística de auto-bind (A2) y **A6, mesh** — la única área
-bloqueada por algo externo (el pipeline de alfa).
+Hecho: **el resto de A1, espejado** (`EditorSceneMirror.cpp`) —
+`mirroredBone`, `mirrorBonePose`, `flipBonePose`, `mirrorMeshWeights`. 5
+tests. **Sexto y séptimo bugs de Swift**: los botones Flip / Pose→partner
+**no hacían nada fuera del modo Pose** (el pase de setup o el clip los
+pisaba al instante), y `arm_lower_L` **no encontraba** a `arm_lower_R`
+("_l" de "_lower" se tomaba por marcador).
+
+Lo que falta de la etapa A: la heurística de auto-bind (A2) y **A6, mesh**
+— la única área bloqueada por algo externo (el pipeline de alfa).
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló

@@ -57,6 +57,7 @@ add_library(umeshcore STATIC
     Editor/EditorSceneAnimation.cpp
     Editor/EditorSceneCompositing.cpp
     Editor/EditorSceneProject.cpp
+    Editor/EditorSceneMirror.cpp
     Interop/SwiftBridge.cpp
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp

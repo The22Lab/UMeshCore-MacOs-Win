@@ -571,6 +571,23 @@ public:
     // changed, so a blur with no edit pushes no undo.
     bool renameHierarchyItem(Uuid itemID, const std::string& proposed);
 
+    // ---- Mirroring (EditorSceneMirror.cpp)
+    //
+    // Partners are found by the side marker in the name (arm_L / arm_R,
+    // left / right); a bone with no marker mirrors to nothing.
+    static std::optional<std::string> mirroredBoneName(const std::string& name);
+    std::optional<Uuid> mirroredBone(Uuid boneID) const;
+    // Copies each vertex's weights from the vertex nearest its reflection
+    // about `axisX` (the mesh's own centre when nullopt), bones swapped for
+    // their partners; a vertex with no partner within `tolerance` is left
+    // alone. Returns how many vertices were mirrored.
+    int mirrorMeshWeights(Uuid imageID, std::optional<float> axisX, float tolerance);
+    // Each bone's pose reflected onto its partner. Returns how many bones
+    // were written.
+    int mirrorBonePose(const std::vector<Uuid>& boneIDs);
+    // One bone reflected in place about its parent's axis.
+    void flipBonePose(Uuid boneID);
+
     // ---- Draw order keys (EditorSceneStructure.cpp)
     void keyDrawOrder();
     void keyDrawOrder(const std::vector<Uuid>& order);
@@ -1027,6 +1044,7 @@ private:
     bool skinChainContains(Uuid start, Uuid target) const;
     std::unordered_map<std::string, std::optional<Uuid>> setupAttachments() const;
     void selectKeyframeAt(Uuid targetID, AnimationTrackProperty property, int frame);
+    void writeMirroredPose(Uuid boneID, const Transform3D2D& pose, bool includesScale);
 
     int playbackLowerBound(std::optional<int> fallback) const;
     int playbackUpperBound(std::optional<int> fallback, std::optional<int> minimum) const;
