@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-55 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+56 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1115,27 +1115,41 @@ de "fuentes compiladas y enlazadas"), `Vec2` cruzando con sus campos, un
 tipo con métodos (`SceneLightMask`), y un algoritmo real
 (`ScenePlayback`).
 
-### Pendiente
+### ⚠️ Cambio de estrategia: desconexión TOTAL del core Swift
 
-**Lo siguiente es que alguien con un Mac compile y ejecute esos cuatro
-tests.** Hasta que eso esté confirmado, todo lo demás de 6a se escribiría
-sobre una suposición: en este entorno Linux no hay `swift`, `swiftc` ni
-`xcodebuild`, así que **todo el Swift de esta migración llega compilado
-cero veces**.
+Decisión del usuario: **al compilar en el Mac, la interfaz corre sobre el
+core C++ y nada del core Swift original está en funcionamiento**; el Swift
+se conserva solo como referencia. Sustituye a "los dos cores conviven".
+**El plan completo, la arquitectura y el inventario están en
+`UMeshCore/bindings/swift/MIGRATION.md` — léelo antes de tocar 6a.**
 
-El plan completo por rebanadas (1 puente de tipos → 2 esqueleto → 3
-animación → 4 mesh → 5 serialización → 6 Scene) y el porqué de su forma
-está en el mensaje del commit de la rebanada 0 y en el plan de la sesión.
-La forma corta, que es lo que hay que no olvidar: **las vistas no pueden
-hablar con objetos C++ opacos** —sostienen copias de structs Swift,
-SwiftUI diffea por `Equatable`, y hay `Binding` encadenando sobre campos
-almacenados (`InspectorPanelView.swift:1247`)—, así que **UMeshCore se
-queda los algoritmos y los structs Swift se quedan como espejo de datos,
-convertidos en la frontera**.
+La forma corta:
 
-Las fachadas de interop **no** están escritas, a propósito: el orden
-razonable es escribirlas *cuando una vista concreta las pida*. Una fachada
-especulativa es una segunda API que mantener.
+- `umeshcore::EditorScene` crece hasta ser el `SceneManager` de verdad:
+  estado de modelo + todas sus operaciones, con tests. El mismo que usará
+  Windows. La interfaz usa **264 miembros** de `SceneManager`;
+  `EditorScene` tenía ~40.
+- El `SceneManager` Swift pasa a **adaptador**: estado de UI puro +
+  propiedades computadas sobre `core` + una llamada por operación.
+- Los structs Swift (`Bone`, `SceneImage`…) quedan como **declaraciones de
+  datos sin lógica**, porque las vistas los necesitan como valores (las
+  vistas no pueden hablar con objetos C++ opacos: `Binding` sobre campos,
+  diff por `Equatable` — `InspectorPanelView.swift:1247`).
+- Los originales van a `Reference/SwiftCore/`, fuera del target.
+
+Hecho: **A0**, `Interop/SwiftBridge.h` — formas planas de los tres
+`std::variant` (tag + payloads). Swift no importa una función cuya firma
+mencione un variant, así que la recomendación original de la auditoría
+(accesores que *toman* el variant) no servía; está corregida en
+`bindings/swift/README.md`. 6 tests; la propiedad clave es que los cuatro
+casos que comparten payload `Vec2` no se colapsan.
+
+**Bloqueante que sigue en pie**: los 4 tests de
+`UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló
+un nombre de target viejo en el `.pbxproj` que impedía compilar el bundle
+de tests). En este entorno no hay `swift`/`xcodebuild`: **todo el Swift de
+la etapa B llega compilado cero veces**, así que va por áreas para que
+cada error se localice.
 
 Sin empezar: el shell WinUI 3 + DirectX (6b).
 

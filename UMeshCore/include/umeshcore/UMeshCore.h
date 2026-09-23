@@ -169,5 +169,10 @@
 // `ExportSettings.h`.
 #include "umeshcore/Export/ExportSettings.h"
 
+// ---- Interop ----
+// The Swift-facing edge: flat forms of the three variants and the named
+// container instantiations Swift needs. See `Interop/SwiftBridge.h`.
+#include "umeshcore/Interop/SwiftBridge.h"
+
 // ---- Library identity ----
 #include "umeshcore/Version.h"

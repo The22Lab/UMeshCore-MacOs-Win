@@ -49,6 +49,7 @@ add_library(umeshcore STATIC
     Editor/TimelineGraphMath.cpp
     Editor/HierarchyDisplay.cpp
     Editor/SceneViewport.cpp
+    Interop/SwiftBridge.cpp
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp
     Serialization/ProjectDocument.cpp

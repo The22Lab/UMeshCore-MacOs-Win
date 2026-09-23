@@ -76,6 +76,16 @@ el variant sigue siendo la representación (nada del core cambia); el
 alternativa —convertir a struct con tag— pierde la exhaustividad que el
 compilador C++ da hoy en cada `std::visit`, y este port tiene varios.
 
+> **Corrección (Fase 6a, al escribirlo de verdad).** Esa forma no sirve
+> tal cual: los accesores toman el variant *como parámetro*, y Swift no
+> importa una función cuya firma menciona un tipo que no puede importar.
+> Lo escrito en `Interop/SwiftBridge.h` es una **forma plana** por variant
+> (tag + los payloads de todos los casos) y un par de funciones entre esa
+> forma y el tipo de modelo que contiene el variant (`Keyframe`,
+> `SceneLayer`), de modo que ningún variant aparece en una firma que Swift
+> llame. El razonamiento de abajo sobre conservar el variant en C++ sigue
+> en pie.
+
 Precedente que ya existe: `SceneSelection` está escrito como
 kind + id *justamente* porque sus dos casos comparten payload; el header
 lo dice. Aquí es al revés — los payloads difieren — así que el variant se
