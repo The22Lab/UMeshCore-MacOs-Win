@@ -179,6 +179,8 @@
 // The Swift-facing edge: flat forms of the three variants and the named
 // container instantiations Swift needs. See `Interop/SwiftBridge.h`.
 #include "umeshcore/Interop/SwiftBridge.h"
+#include "umeshcore/Interop/SwiftModelBridge.h"
+#include "umeshcore/Interop/EditorSession.h"
 
 // ---- Library identity ----
 #include "umeshcore/Version.h"

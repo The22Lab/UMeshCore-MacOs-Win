@@ -30,6 +30,9 @@ struct Bone {
     // `bindingColor` below for why it's assigned on bind, not on creation.
     std::optional<Vec4> color;
 
+    // Swift's `Bone` is `Equatable` by synthesis: every stored field.
+    bool operator==(const Bone&) const = default;
+
     Bone() : animationClip("") {}
 
     Bone(std::string name_, std::optional<Uuid> parentID_, std::optional<Transform3D2D> baseTransform_,

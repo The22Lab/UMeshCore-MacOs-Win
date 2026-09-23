@@ -64,6 +64,8 @@ add_library(umeshcore STATIC
     Editor/EditorSceneMirror.cpp
     Editor/EditorSceneMesh.cpp
     Interop/SwiftBridge.cpp
+    Interop/SwiftModelBridge.cpp
+    Interop/EditorSession.cpp
     Serialization/BinaryExporter.cpp
     Serialization/Json.cpp
     Serialization/ProjectDocument.cpp

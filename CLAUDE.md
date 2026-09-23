@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-67 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+68 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1059,7 +1059,7 @@ Lo primero que necesitan **6a y 6b** es lo mismo: que la librería sea
 
 ### Hecho
 
-- **`include/umeshcore/UMeshCore.h`** — el umbrella: los 102 headers
+- **`include/umeshcore/UMeshCore.h`** — el umbrella: los 113 headers
   públicos en un `#include`. Es para los shells, **no** para el código de
   dentro: un `.cpp` de `src/` sigue incluyendo solo lo que usa.
   Ojo: el umbrella **no** se genera por glob (`HeaderSelfContainmentTests`
@@ -1077,7 +1077,7 @@ Lo primero que necesitan **6a y 6b** es lo mismo: que la librería sea
   externo real que hace `find_package(UMeshCore)` y enlaza
   `UMeshCore::umeshcore` compila y corre.
 - **`HeaderSelfContainmentTests`** — compila **cada header público como su
-  propia unidad de traducción**, solo. Los 102 pasan hoy; el target existe
+  propia unidad de traducción**, solo. Los 114 pasan hoy; el target existe
   para que el primero que deje de pasar rompa *este* build y no el de un
   shell, meses después, con otro compilador.
 - **`bindings/swift/README.md`** y **`bindings/win/README.md`** — las
@@ -1278,12 +1278,25 @@ por el camino, cuatro hallazgos fijados por test y sin arreglar (decisión
 del usuario), todo en `MIGRATION.md`. Lo siguiente es la **etapa B**: el
 `SceneManager` Swift como adaptador sobre `EditorScene`.
 
-**Bloqueante que sigue en pie**: los 4 tests de
-`UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló
-un nombre de target viejo en el `.pbxproj` que impedía compilar el bundle
-de tests). En este entorno no hay `swift`/`xcodebuild`: **todo el Swift de
-la etapa B llega compilado cero veces**, así que va por áreas para que
-cada error se localice.
+**Bloqueante resuelto**: ⌘U pasa en el Mac — los 4 smoke tests de interop
+y `MeshKernelTests` (cuyo test de contorno plegado esperaba el error
+equivocado: el port C++ ya lo había predicho, y el Mac lo confirmó).
+
+**Etapa B, primer tramo — el puente** (`UltraMesh 2d animation/Bridge/`):
+conversiones en los dos sentidos entre los structs Swift y los de
+UMeshCore para todo el rig y los sprites (UUID, SIMD, matrices, enums por
+nombre, keyframes, clips, huesos, los cuatro constraints, skeleton, mesh,
+sprite, jerarquía, skins, eventos), más `CoreSession`: la escena vive en
+el heap de C++ (`Interop/EditorSession.h`) y Swift guarda un puntero,
+porque `EditorScene` lleva el historial de undo dentro y Swift copia
+valores cuando quiere. El lado C++ (`Interop/SwiftModelBridge.h`: opcionales,
+mapas como listas ordenadas, enums por nombre, constraints como structs
+planos) tiene su suite aquí; el lado Swift, `BridgeRoundTripTests.swift`
+en el Mac. **Todo el Swift de `Bridge/` llega compilado cero veces**: el
+siguiente ⌘U dirá qué hay que ajustar. Detalle en `MIGRATION.md` § B.
+
+Siguiente: Scene en el puente (B-1c) y B0 (`SceneManager` sobre
+`CoreSession`).
 
 Sin empezar: el shell WinUI 3 + DirectX (6b).
 

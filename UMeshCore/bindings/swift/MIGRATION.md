@@ -211,6 +211,30 @@ que hoy.
 ### B — `SceneManager` pasa a adaptador (Swift, SIN compilador aquí)
 
 1. **Bridge/**: conversiones de tipos hoja y de cada struct espejo.
+   **Hecho para el rig y los sprites** (falta Scene, B-1c):
+   `UltraMesh 2d animation/Bridge/` (`LeafBridge`, `RigBridge`,
+   `SpriteBridge`, `CoreSession`) sobre `Interop/SwiftModelBridge.h` +
+   `Interop/EditorSession.h`, con `BridgeRoundTripTests.swift` en el Mac y
+   `SwiftModelBridgeTests` aquí. Decisiones:
+   - **La escena vive en el heap de C++** (`EditorSession`) y Swift guarda
+     un puntero: `EditorScene` es copiable y lleva el historial de undo
+     dentro, y Swift copia valores cuando quiere. `pointee` es un
+     addressor: nada se copia salvo el campo que se nombra.
+   - **Swift no toca `std::optional`, mapas ni sets**: construir un
+     optional pasa por un constructor plantilla, que Swift no importa.
+     Cada uno tiene `makeOptionalX`/`optionalHasX`/`optionalX`, y cada mapa
+     una lista ordenada con getter y setter.
+   - **Los enums con raw value `String` se emparejan por NOMBRE** (el del
+     formato de archivo), con una tabla construida una vez; el tag del
+     `KeyframeValue` plano va por `switch` sobre los casos C++, donde un
+     error es de compilación y no un cambio silencioso.
+   - **Los cuatro constraints cruzan como structs planos**
+     (`IKConstraintData`…): las clases tienen virtuales, y cómo importa
+     Swift una clase polimórfica ha cambiado entre versiones.
+   - `ToolManager` queda fuera de la sesión por ahora (no copiable →
+     `~Copyable` en Swift; se prueba aparte cuando lleguen las tools).
+   - Primer ⌘U de la etapa B: **pendiente** (todo el Swift de `Bridge/`
+     llega compilado cero veces).
 2. **B0 — el estado se muda a C++**: las propiedades de modelo de
    `SceneManager` pasan a ser computadas sobre `core` (con caché del espejo
    Swift invalidada por token — `skeleton` se lee 82 veces en las vistas y
@@ -255,6 +279,7 @@ Metal, y el estado de UI de `AppState`.
   El bucle es: se escribe el Swift, el usuario compila, pega los errores,
   se corrigen. Por eso B va por áreas y cada commit deja la app
   compilable — un error se localiza en el área que se acaba de tocar.
-- **Bloqueante previo**: los 4 tests de `UMeshCoreInteropSmokeTests.swift`
-  tienen que pasar en el Mac. Si el interop en sí no funciona, todo lo de
-  B está escrito sobre una suposición.
+- **Bloqueante previo, resuelto**: los 4 tests de
+  `UMeshCoreInteropSmokeTests.swift` pasan en el Mac (⌘U en verde, junto
+  con `MeshKernelTests`; ver el hallazgo de `testFoldedOutlineIsRejected`
+  en `UMeshCore/tests/MeshKernelTests.cpp`).
