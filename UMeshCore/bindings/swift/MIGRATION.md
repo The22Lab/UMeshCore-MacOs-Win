@@ -72,7 +72,7 @@ Por área, en orden de dependencia:
 | A2 | Imágenes y orden de dibujo: `updateImage`, `updateVisibility`, `imagesInDrawOrder`, `moveImageInDrawOrder`/`nudge`/`sortDrawOrderByBoneDepth`, `bindImage`/`unbindBoneFromImage`/`autoBindImage`, `addImage`, `captureCurrentArrangement` | 🔨 todo salvo auto-bind |
 | A3 | Skins, slots, attachments (≈19 miembros) | ✅ |
 | A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ✅ |
-| A5 | Animación: selección/copia/pegado/movimiento de keyframes, tangentes, interpolación, claves de transform/constraint/draw order/attachment/eventos, transporte (`togglePlayback`, `stepFrames`, rango, `timecode`) | ⬜ |
+| A5 | Animación: selección/copia/pegado/movimiento de keyframes, tangentes, interpolación, claves de transform/constraint/draw order/attachment/eventos, transporte (`togglePlayback`, `stepFrames`, rango, `timecode`); los flags de modo de canvas, `leaveSpriteModes` y la escalera de Escape | ✅ |
 | A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | ⬜ |
 | A7 | Scene: composiciones, capas, luces, claves de luz/cámara, `frameSceneView`, `alignSceneCameraToView`/`alignSceneViewToCamera` | ⬜ |
 | A8 | Persistencia: `ProjectDocument` ↔ `EditorScene` (el formato ya está portado; falta cablearlo al estado) | ⬜ |
@@ -100,7 +100,41 @@ Por área, en orden de dependencia:
   captura sin escribir, siempre lo hizo bien. Test:
   `testAnEditAutoKeysInAnimatorAndKeepsTheSetupValue`.
 
-Los tres tests se comprobaron volviendo a poner la conducta Swift: fallan.
+- **Los eventos nunca se disparaban durante la reproducción.** `tickPlayback`
+  escribe `currentFrame` directamente y no llama a `fireEventsCrossed`; sus
+  dos únicos llamantes (grep) son `setCurrentFrame` y `setAnimationTime`, o
+  sea arrastrar el playhead y los pasos de frame. Un evento de "pisada"
+  sonaba al hacer scrub y jamás al darle a Play. La rama de salto de loop de
+  `fireEventsCrossed` solo es alcanzable desde la reproducción: en Swift es
+  código muerto. Al hacerla viva se corrigen dos cosas más de esa rama,
+  documentadas en `EditorSceneAnimation.cpp`: usa los límites de la
+  **sesión** (no el rango del proyecto, que dispararía claves que el loop
+  nunca cruzó), y ordena cada tramo por separado (el orden por frame de la
+  unión ponía el inicio de la vuelta nueva antes del final de la vieja).
+  Tests: `testEventsFireWhilePlaying`,
+  `testALoopWrapFiresTheEndOfTheOldLapThenTheStartOfTheNew`.
+
+Los cuatro tests se comprobaron volviendo a poner la conducta Swift: fallan.
+
+**Rarezas de Swift replicadas a propósito, con nota en el código:** el
+`didSet` de `projectFramesPerSecond` se dispara dos veces ante un valor
+fuera de rango y reinicia la sesión aunque la tasa efectiva no cambie; el
+reinicio es un `play()` pelado (rango del proyecto, no el de la sesión);
+`duplicateSelectedKeyframes` escribe `currentFrame = minFrame` sin mover
+`animationTime` ni el playhead. Y una divergencia de determinismo: la
+selección de keyframes es un `Set` en Swift y cinco sitios leen su
+`.first`, que no está especificado; aquí es un vector sin duplicados y el
+"primero" es el primero seleccionado.
+
+**Lo que el core no puede hacer y el shell sí.** El reloj se inyecta (como
+en `ScenePlayback`): `play`/`togglePlayback`/`setProjectFramesPerSecond`
+devuelven los segundos hasta el único wake que Swift programa con un
+`Task` (el fin de un clip sin loop), y el shell llama a `tickPlayback`
+entonces. `leaveSpriteModes` termina en Swift con
+`toolManager?.setTool(.select)`; el core no ve al `ToolManager`, así que
+deja `requestedToolChange = .select` y el adaptador lo ejecuta y lo
+limpia. `meshEditNotice` pasa al core porque lo escriben operaciones de
+mesh (A6) que viven aquí.
 
 **Closures de Swift que no cruzan.** `updateIKConstraint(id) { $0.x = … }`
 pasa a `replaceIKConstraint(valor)`: el adaptador lee, aplica su closure a

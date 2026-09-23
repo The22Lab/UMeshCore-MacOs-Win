@@ -38,12 +38,11 @@
 //
 // Fields and methods here are 1:1 with their SceneManager counterparts
 // (same names, same semantics) except where noted IN THE .cpp THAT
-// DEFINES THEM. Not absorbed yet: `ikBuilder` draft state, the mesh-edit
-// and weight-paint modes (`MeshTool`), and anything from `CanvasPicking`
-// that needs a loaded texture's alpha. Until the sprite modes land,
-// `boneSelectionBecameNonEmpty`'s Swift counterpart calls
-// `leaveSpriteModes()`, which this omits: with every flag it would touch
-// permanently false, that call is a no-op here, not a behavior change.
+// DEFINES THEM. Not absorbed yet: the mesh-edit and weight-paint
+// OPERATIONS (`MeshTool`, A6) and anything from `CanvasPicking` that needs
+// a loaded texture's alpha. The mode FLAGS are here (A5), so
+// `boneSelectionBecameNonEmpty` now calls `leaveSpriteModes()` as Swift
+// does.
 
 #include <algorithm>
 #include <optional>
@@ -57,9 +56,12 @@
 #include "umeshcore/Constraints/ConstraintAnimation.h"
 #include "umeshcore/Core/Uuid.h"
 #include "umeshcore/Constraints/PhysicsConstraintSystem.h"
+#include "umeshcore/Editor/EditorEscape.h"
 #include "umeshcore/Editor/IKBuilder.h"
+#include "umeshcore/Editor/ToolType.h"
 #include "umeshcore/Editor/UndoRedoManager.h"
 #include "umeshcore/Model/HierarchyItem.h"
+#include "umeshcore/Interop/SwiftBridge.h"
 #include "umeshcore/Model/SceneImage.h"
 #include "umeshcore/Model/Skeleton.h"
 #include "umeshcore/Model/Skin.h"
@@ -119,7 +121,9 @@ public:
     // not UI-only -- used by the META chunk of the binary exporter (see
     // Serialization/BinaryExporter.h) and, eventually, the timeline itself.
     int playbackStartFrame = 0;
-    int playbackEndFrame = 0;
+    // 90, as Swift declares it (the port had 0; the document default was
+    // already 90, so a fresh scene and a fresh file now agree).
+    int playbackEndFrame = 90;
 
     // --- Selection state ---
     std::optional<Uuid> selectedImageID;
@@ -486,11 +490,18 @@ public:
 
     // --- Animation ---
 
+    // Writes a key at the playhead and, like Swift, leaves it the selected
+    // key (the port used to return the selection without storing it).
     std::optional<SelectedKeyframe> commitKeyframe(
         Uuid targetID, AnimationTrackProperty property, std::optional<KeyframeValue> value = std::nullopt) {
-        return umeshcore::commitKeyframe(
+        const std::optional<SelectedKeyframe> selection = umeshcore::commitKeyframe(
             skeleton, images, sceneAnimationClip, constraintSetupValues, isAnimationEditingEnabled, isPoseMode,
             animationTime, currentFrame, targetID, property, value, lastBoundImageRotation);
+        if (selection.has_value()) {
+            selectedKeyframes = {*selection};
+            selectedKeyframe = selection;
+        }
+        return selection;
     }
     std::optional<SelectedKeyframe> commitMeshDeformKeyframe(Uuid imageID) {
         return umeshcore::commitMeshDeformKeyframe(
@@ -700,6 +711,172 @@ public:
     void removeConstraintPropertyTrack(Uuid constraintID, AnimationTrackProperty property);
     void restoreConstraintSetupValue(Uuid constraintID, AnimationTrackProperty property);
 
+    // ---- Transport (EditorSceneAnimation.cpp)
+    //
+    // THE CLOCK IS INJECTED, as in `Scene/ScenePlayback.h`: every entry that
+    // needs "now" takes it, in the shell's monotonic seconds (Swift:
+    // `CACurrentMediaTime()`). The playhead is a pure function of that time,
+    // so nothing accumulates and a dropped frame costs one sample, never a
+    // step. The one thing Swift does with a timer -- stopping a clip that
+    // does not loop even when nothing is drawing -- is returned instead:
+    // `play` / `togglePlayback` / `setProjectFramesPerSecond` give the
+    // seconds until that wake, and the shell calls `tickPlayback` then.
+
+    bool isPlaying = false;
+    bool playbackLoops = true;
+    double projectFramesPerSecond = 30.0;
+    // Where the playhead line is, to a fraction of a frame (Swift's
+    // `PlayheadClock.frame`, its own object there so a tick redraws a line
+    // and not the timeline). The shell mirrors it into that object.
+    double playheadFrame = 0.0;
+
+    struct PlaybackRun {
+        int startFrame = 0;
+        double startTime = 0.0;
+        double framesPerSecond = 30.0;
+        int minFrame = 0;
+        int maxFrame = 0;
+    };
+    std::optional<PlaybackRun> playbackSession;
+
+    void setCurrentFrame(int frame);
+    void setAnimationTime(double time);
+    void setPlaybackRange(int start, int end);
+    void stepFrames(int delta, std::optional<int> lowerBound, std::optional<int> upperBound);
+    std::optional<double> play(double now, std::optional<bool> looping, std::optional<int> lowerBound,
+                               std::optional<int> upperBound, std::optional<double> framesPerSecond);
+    void tickPlayback(double now);
+    void pause();
+    std::optional<double> togglePlayback(double now, std::optional<bool> looping, std::optional<int> lowerBound,
+                                         std::optional<int> upperBound);
+    // `projectFramesPerSecond.didSet`: clamped to 1..240, and a running
+    // session restarts at the new rate.
+    std::optional<double> setProjectFramesPerSecond(double fps, double now);
+    double secondsPerFrame() const { return 1.0 / std::max(projectFramesPerSecond, 1.0); }
+    double timecode(int frame) const { return static_cast<double>(frame) * secondsPerFrame(); }
+
+    // ---- Canvas modes (EditorSceneAnimation.cpp)
+    //
+    // The tool in hand, mirrored from ToolManager so the key button knows
+    // what to write, and the sprite modes a tool change leaves.
+    ActiveTool activeCanvasTool = ActiveTool::Select;
+    bool isMeshEditEnabled = false;
+    bool meshWeightPaintEnabled = false;
+    bool isBindingBonesMode = false;
+    std::optional<Uuid> activeWeightPaintBoneID;
+    // A canvas mode asked for before a sprite was selected (the raw value
+    // of the shell's `CanvasMode`), entered when one is picked.
+    std::optional<std::string> pendingCanvasMode;
+    // `ToolManager.setTool` and the quick switch both land here.
+    void canvasToolChanged(ActiveTool tool);
+
+    // Mesh edit and weight paint differ in what they do to a mesh and agree
+    // on needing one.
+    bool isSpriteMeshMode() const { return isMeshEditEnabled || meshWeightPaintEnabled; }
+    // Being in a mesh mode is what means "show me the mesh"; the layer flag
+    // alone is cleared by every selection path the modes survive.
+    bool isMeshOverlayVisible() const { return isMeshEditEnabled || isMeshLayerSelected || meshWeightPaintEnabled; }
+    // `isBindingBonesMode.didSet`: leaving bind mode drops its hover.
+    void setBindingBonesMode(bool enabled) {
+        isBindingBonesMode = enabled;
+        if (!enabled) hoveredBindBoneID = std::nullopt;
+    }
+
+    // What a mesh operation says about itself (Swift's `MeshEditNotice`).
+    // Model-side because the operations that set it are ported here; the
+    // shell only shows it and clears it.
+    struct MeshEditNotice {
+        std::string text;
+        bool isWarning = false;
+        bool operator==(const MeshEditNotice&) const = default;
+    };
+    std::optional<MeshEditNotice> meshEditNotice;
+
+    // Swift's `leaveSpriteModes` ends with `toolManager?.setTool(.select)`
+    // when the mesh tool is in hand. This object cannot reach a tool manager
+    // (and must not: the dependency points the other way), so it RAISES the
+    // request and the shell -- which owns the ToolManager -- performs it and
+    // clears this. Same effect, one hop later.
+    std::optional<ActiveTool> requestedToolChange;
+
+    // ---- The way out (EditorSceneAnimation.cpp)
+    //
+    // The facts the escape ladder reads; the ORDER lives in `EditorEscape`.
+    EditorEscape::State escapeState() const;
+    // Leave one rung and return it. `hasNonDefaultTool` is the one fact this
+    // object does not hold, and the `ActiveTool` rung is the caller's to
+    // apply.
+    std::optional<EditorScope> exitDeepestScope(bool hasNonDefaultTool);
+
+    // ---- Keyframes (EditorSceneAnimation.cpp)
+
+    enum class TransformKeyState { None, Partial, Full };
+    struct KeyframeStart {
+        SelectedKeyframe key;
+        int frame = 0;
+    };
+
+    std::vector<CopiedKeyframePayload> copiedKeyframes;
+
+    // Every track except a bone's or a sprite's own lives on the scene clip.
+    static bool isSceneOwnedTrack(AnimationTrackProperty property) {
+        return domain(property) != AnimationTrackDomain::Node;
+    }
+    // Non-const: reading a sprite's keys first settles its animation space,
+    // as Swift's does.
+    std::vector<Keyframe> keyframes(Uuid targetID, AnimationTrackProperty property);
+
+    static std::vector<AnimationTrackProperty> transformKeyProperties(ActiveTool tool);
+    std::vector<AnimationTrackProperty> activeTransformKeyProperties() const {
+        return transformKeyProperties(activeCanvasTool);
+    }
+    std::vector<Uuid> transformKeyTargets() const;
+    TransformKeyState transformKeyState() const;
+    bool toggleTransformKey();
+
+    void selectKeyframe(Uuid targetID, AnimationTrackProperty property, Uuid keyframeID, bool additive);
+    void moveKeyframe(Uuid targetID, AnimationTrackProperty property, Uuid keyframeID, int toFrame);
+    void updateKeyframeValue(Uuid targetID, AnimationTrackProperty property, Uuid keyframeID,
+                             const KeyframeValue& value);
+    // The same, in the form Swift can pass (no variant in the signature).
+    void updateKeyframeValue(Uuid targetID, AnimationTrackProperty property, Uuid keyframeID,
+                             const FlatKeyframeValue& value);
+    void updateKeyframeTangents(Uuid targetID, AnimationTrackProperty property, Uuid keyframeID,
+                                std::optional<Vec2> inTangent, std::optional<Vec2> outTangent,
+                                std::optional<Vec2> secondaryInTangent, std::optional<Vec2> secondaryOutTangent);
+    void moveSelectedKeyframes(const SelectedKeyframe& anchor, int deltaFrames,
+                               const std::vector<KeyframeStart>& startFrames);
+    std::optional<KeyframeInterpolation> selectedKeyframeInterpolation() const;
+    void setInterpolationForSelectedKeyframes(KeyframeInterpolation interpolation);
+    void applyAutoTangentsToSelectedKeyframes();
+    void deleteSelectedKeyframes();
+    bool isKeyframeSelected(const SelectedKeyframe& selection) const;
+    void setSelectedKeyframes(const std::vector<SelectedKeyframe>& selections, bool additive);
+    // Fills `copiedKeyframes` and returns how many were copied. Swift also
+    // wraps a summary in an `NSItemProvider`; that is the shell's to build
+    // (the text is "UltraMeshKeyframes:<count>").
+    int copySelectedKeyframes();
+    void pasteCopiedKeyframes();
+    void duplicateSelectedKeyframes();
+
+    // ---- Events (EditorSceneAnimation.cpp)
+    std::vector<FiredAnimationEvent> recentlyFiredEvents;
+
+    std::optional<AnimationEvent> animationEvent(Uuid id) const;
+    std::vector<Uuid> keyedEventIDs() const;
+    Uuid createAnimationEvent(std::optional<std::string> requestedName);
+    void renameAnimationEvent(Uuid id, const std::string& newName);
+    // `updateAnimationEvent(id) { ... }` -- see `replaceIKConstraint`.
+    void replaceAnimationEvent(const AnimationEvent& updated);
+    void deleteAnimationEvent(Uuid id);
+    void keyEvent(Uuid eventID, const AnimationEventPayload& payload);
+    bool eventHasKeyAtPlayhead(Uuid eventID) const;
+    void removeEventKeyAtPlayhead(Uuid eventID);
+    std::optional<AnimationEventPayload> eventPayloadAtPlayhead(Uuid eventID) const;
+    void setEventPayloadAtPlayhead(Uuid eventID, const AnimationEventPayload& payload);
+    void fireEventsCrossed(int from, int to);
+    void clearFiredEvents() { recentlyFiredEvents.clear(); }
+
 private:
     bool interactionPushed_ = false;
 
@@ -726,6 +903,18 @@ private:
     std::unordered_map<std::string, std::optional<Uuid>> setupAttachments() const;
     void selectKeyframeAt(Uuid targetID, AnimationTrackProperty property, int frame);
 
+    int playbackLowerBound(std::optional<int> fallback) const;
+    int playbackUpperBound(std::optional<int> fallback, std::optional<int> minimum) const;
+    std::optional<double> scheduledEndWake() const;
+    std::vector<Keyframe> transformKeyframes(Uuid targetID, AnimationTrackProperty property) const;
+    int keyedTransformCount(Uuid targetID, int frame) const;
+    void writeTransformKey(Uuid targetID, int frame);
+    void removeTransformKey(Uuid targetID, int frame);
+    void insertSelectedKeyframe(const SelectedKeyframe& selection);
+    std::optional<Keyframe> resolveSelectedKeyframe(const SelectedKeyframe& selection) const;
+    std::string uniqueEventName(const std::string& requested, std::optional<Uuid> excluding) const;
+    void collectEvents(int lower, int upper, std::vector<FiredAnimationEvent>& fired) const;
+
     // The one place the three bone-selection fields are written. `order`
     // is authoritative: the set is its contents and the primary is its
     // last element.
@@ -743,8 +932,8 @@ private:
     }
 
     // What picking a bone always means: a sprite and a bone are never both
-    // the selection. `leaveSpriteModes()` is deferred -- see this file's
-    // header comment.
+    // the selection, and the modes that act on a sprite's mesh have nothing
+    // left to act on.
     void boneSelectionBecameNonEmpty() {
         selectedImageID = std::nullopt;
         selectedImageIDs.clear();
@@ -752,6 +941,20 @@ private:
         hoveredMeshVertexIndex = std::nullopt;
         selectedMeshVertexIndices.clear();
         selectedMeshInternalEdgeIndex = std::nullopt;
+        leaveSpriteModes();
+    }
+
+    // Ends the sprite modes because the sprite is gone. Changing WHICH sprite
+    // is painted deliberately does not come through here.
+    void leaveSpriteModes() {
+        if (!(isSpriteMeshMode() || isBindingBonesMode || pendingCanvasMode.has_value())) return;
+        meshWeightPaintEnabled = false;
+        isMeshEditEnabled = false;
+        setBindingBonesMode(false);
+        activeWeightPaintBoneID = std::nullopt;
+        pendingCanvasMode = std::nullopt;
+        meshEditNotice = std::nullopt;
+        if (activeCanvasTool == ActiveTool::Mesh) requestedToolChange = ActiveTool::Select;
     }
 
     int depthOf(const Bone& bone) const {

@@ -27,18 +27,13 @@ ToolManager::ToolManager() {
 
 void ToolManager::setTool(EditorScene& scene, ActiveTool tool) {
     currentTool = tool;
-    // canvasToolChanged's full effect also clears pendingCanvasMode/
-    // isMeshEditEnabled/meshWeightPaintEnabled/isBindingBonesMode/
-    // activeWeightPaintBoneID -- none of which EditorScene models yet (see
-    // its file header). isPoseMode is the one piece of that reset already
-    // real here, so it's the one piece ported.
-    scene.isPoseMode = false;
+    scene.canvasToolChanged(tool);
 }
 
 void ToolManager::activateQuickSwitchTool(
     EditorScene& scene, ActiveTool tool, std::optional<Vec2> cursorPosition) {
     currentTool = tool;
-    scene.isPoseMode = false;
+    scene.canvasToolChanged(tool);
     quickSwitchTool = tool;
     if (cursorPosition.has_value()) quickSwitchCursorPosition = cursorPosition;
     // The ~1.1s auto-clear timer is the caller's concern -- see file header.

@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-58 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+59 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -1167,6 +1167,17 @@ un stub vacío también en Swift y se porta igual. 8 tests. **Tercer bug de
 Swift**: el primer auto-key de un constraint **perdía el valor autorado**
 (se escribía antes de capturar el setup); arreglado, con test que falla con
 el orden de Swift.
+
+Hecho: **A5, animación** (`src/Editor/EditorSceneAnimation.cpp`) — el
+transporte con reloj inyectado (el wake de fin de clip se devuelve al
+shell), el botón de key (tres estados, acotado al canal de la
+herramienta), selección/movimiento/interpolación/tangentes/borrado/copia/
+pegado/duplicado de keyframes, eventos, los flags de modo de canvas con
+`canvasToolChanged` (que ahora llama `ToolManager::setTool`),
+`leaveSpriteModes` y la escalera de Escape. 21 tests. **Cuarto bug de
+Swift**: los eventos **nunca se disparaban durante la reproducción** (solo
+al hacer scrub); arreglado, con test que falla con la conducta Swift.
+Detalle y rarezas replicadas en `MIGRATION.md`.
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló
