@@ -4,11 +4,14 @@
 // skinning/auto-weighting pipeline. NOT YET PORTED from the Swift source
 // (tracked in UMeshCore/ROADMAP.md as follow-up Phase 1 work, since they
 // are editor-time conveniences rather than continuously-running runtime
-// behavior): `generated()`/`generatedGrid` (procedural interior-point mesh
-// generation for a freshly-created sprite mesh), the manual-triangle-face
-// workflow (`sanitizedManualTriangles`, `triangulatedIndicesWithInternalEdges`
-// combining manual faces with the kernel result), and the Auto-Bind
-// bone-fit scoring heuristic (which bones a sprite suggests binding to).
+// behavior): at first `generated()`, the manual-face workflow and the
+// Auto-Bind bone fit. PHASE 6a PORTED THOSE (see "Editing" below and
+// src/Mesh/MeshEditing.cpp); what is still out is everything that reads a
+// texture's alpha (`tracedHull`, `constrainedToOpaqueArea`), and four
+// private helpers with no caller in Swift (`insertingInteriorVertices`,
+// `edgeCrossesHullBoundary`, `triangleIntroducesCrossings`,
+// `circumcircleContains` -- the remains of an older triangulator; verified
+// by grep), which are dead code and not ported.
 //
 // `SavedMatrix4x4` (the Swift source's Codable-friendly row-major
 // flattening of `simd_float4x4`) is intentionally not mirrored here --
@@ -68,6 +71,9 @@ struct MeshBindPose {
 
     bool operator==(const MeshBindPose&) const = default;
 };
+
+struct MeshInsertedVertex;
+struct MeshTopologyChange;
 
 class Mesh {
 public:
@@ -191,6 +197,79 @@ public:
         float blendZoneFactor = 0.35f, float minWeightThreshold = 0.0001f,
         std::optional<MeshBindPose> imagePose = std::nullopt) const;
 
+    // ---- Editing (src/Mesh/MeshEditing.cpp; Phase 6a) -------------------
+    //
+    // The edit-time half of `Mesh.swift` that needs no texture: bind fit,
+    // manual bind/unbind, procedural generation, vertex insertion/removal,
+    // manual faces and hull clamping. Every retriangulation goes through
+    // `MeshKernel`, the one geometric path, and REFUSES (nullopt / the mesh
+    // unchanged) rather than store a torn mesh.
+
+    // How one bone sits over this sprite's outline -- three readings, any
+    // one enough to make it a candidate (see the .cpp): a bone lying ALONG
+    // the sprite, a long bone CROSSING a small one, and a joint planted
+    // inside it.
+    struct BoneFit {
+        float overlap = 0.0f;        // bone length inside the outline
+        float boneFraction = 0.0f;   // overlap / bone length, 0...1
+        float crossFraction = 0.0f;  // overlap / the outline's span along the bone
+        bool originInside = false;   // the joint is inside the outline
+    };
+    // Exact, not sampled: cut at every crossing, classify each piece by its
+    // midpoint, through the same predicates as the kernel.
+    float insideHullLength(const Vec2& a, const Vec2& b) const;
+    // `start`/`end` in WORLD space, brought into the outline's frame by the
+    // sprite's pose.
+    BoneFit fit(const Vec2& start, const Vec2& end, std::optional<MeshBindPose> pose) const;
+
+    // Binds one bone by hand -- binds, does NOT paint (the weights the
+    // artist painted survive). Swift passes a whole `Bone` and reads its id.
+    Mesh addingBoneInfluence(Uuid boneID, const Mat4& worldMatrix, int maxInfluences = 4,
+                             std::optional<MeshBindPose> imagePose = std::nullopt) const;
+    Mesh removingBoneInfluence(Uuid boneID, int maxInfluences = 4) const;
+
+    // Interior points laid out for a fresh mesh; a quad becomes a 3x3 grid.
+    Mesh generated(const Vec2& size, float density = 30.0f) const;
+
+    // (Defined after the class: a nested struct cannot hold a `Mesh` by
+    // value while `Mesh` is still incomplete.)
+    using InsertedVertex = MeshInsertedVertex;
+    std::optional<InsertedVertex> insertingHullVertex(const Vec2& localPosition, int afterHullEdge) const;
+    // Swift's signature also takes an alpha sampler and threshold that its
+    // body never reads; they are not carried over.
+    std::optional<InsertedVertex> insertingInteriorVertex(const Vec2& localPosition, const Vec2& size) const;
+
+    // A topology change and how old vertex indices map to new ones -- the
+    // remap is what keeps per-vertex deform keys pointing at the right
+    // vertices after a delete.
+    using TopologyChange = MeshTopologyChange;
+    std::optional<TopologyChange> removingVertices(const std::unordered_set<int>& removed) const;
+
+    Mesh connectingVertices(int first, int second) const;
+    Mesh creatingFace(int first, int second, int third) const;
+    Mesh clearingInternalEdges() const;
+    Vec2 clampedPositionInsideHullIfNeeded(int vertexIndex, const Vec2& proposed) const;
+    Mesh clampingInteriorVerticesInsideHull(const Vec2& size) const;
+
+    struct BarycentricSample {
+        int a = 0, b = 0, c = 0;
+        float wa = 0.0f, wb = 0.0f, wc = 0.0f;
+    };
+    // The triangle containing `point` and its weights there, so a vertex
+    // inserted into an animated mesh gets a deform consistent with its
+    // neighbours.
+    std::optional<BarycentricSample> barycentricSample(const Vec2& point) const;
+
+    // Kernel triangulation plus the manual faces; total (falls back to the
+    // hull fan) for callers that cannot refuse.
+    std::vector<std::uint16_t> triangulatedIndicesWithInternalEdges() const;
+
+    // Even-odd containment (Swift's `pointInsideHull`, float arithmetic) and
+    // distance-to-outline. Deliberately NOT the kernel's exact predicate:
+    // the edit tools use this one in Swift.
+    bool pointInsideHull(const Vec2& point) const;
+    bool pointOnHullBoundary(const Vec2& point, float epsilon = 0.8f) const;
+
     static float pointDistanceToSegment(const Vec2& p, const Vec2& a, const Vec2& b) {
         const Vec2 ab = b - a;
         const float abLen2 = lengthSquared(ab);
@@ -215,6 +294,15 @@ private:
         float distancePower, float blendZoneFactor, float minWeightThreshold);
 
     std::vector<std::uint16_t> sanitizedTriangleIndices(const std::vector<std::uint16_t>& triangles) const;
+    float hullSpan(const Vec2& direction) const;
+    Mesh generatedGrid(const Vec2& size, int subdivisions) const;
+    Mesh meshWithRetriangulatedInteriorPoints(const std::vector<Vec2>& interiorPoints, const Vec2& size) const;
+    std::vector<Vec2> sampledInteriorPoints(float spacing, int maxCount) const;
+    bool segmentInsideHull(const Vec2& a, const Vec2& b, int samples = 9) const;
+    std::vector<MeshEdge> hullBoundaryEdges() const;
+    std::vector<MeshTriangle> sanitizedManualTriangles() const;
+    std::vector<std::uint16_t> generatedTrianglesByRemovingTrianglesCoveredByManualFaces(
+        const std::vector<std::uint16_t>& triangles, const std::vector<MeshTriangle>& manual) const;
     std::vector<int> convexHullVertexIndices() const;
     static std::vector<int> deduplicatedRing(const std::vector<int>& idx);
     std::vector<std::uint16_t> triangulatePolygonIndices(const std::vector<int>& polygon) const;
@@ -227,6 +315,20 @@ private:
         const Vec2 ac = c - a;
         return ab.x * ac.y - ab.y * ac.x;
     }
+};
+
+struct MeshInsertedVertex {
+    Mesh mesh;
+    int insertedIndex = 0;
+};
+
+// A topology change and how old vertex indices map to new ones.
+struct MeshTopologyChange {
+    Mesh mesh;
+    std::unordered_map<int, int> remap; // old -> new; removed are absent
+    // Rewrite a per-vertex array so each survivor keeps its value; vertices
+    // with no old counterpart take `fallback`'s.
+    std::vector<Vec2> remapped(const std::vector<Vec2>& perVertex, const std::vector<Vec2>& fallback) const;
 };
 
 } // namespace umeshcore

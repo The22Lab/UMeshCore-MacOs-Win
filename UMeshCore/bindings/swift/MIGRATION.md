@@ -73,7 +73,7 @@ Por área, en orden de dependencia:
 | A3 | Skins, slots, attachments (≈19 miembros) | ✅ |
 | A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ✅ |
 | A5 | Animación: selección/copia/pegado/movimiento de keyframes, tangentes, interpolación, claves de transform/constraint/draw order/attachment/eventos, transporte (`togglePlayback`, `stepFrames`, rango, `timecode`); los flags de modo de canvas, `leaveSpriteModes` y la escalera de Escape | ✅ |
-| A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | ⬜ |
+| A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | 🔨 A6a hecho: la mitad de edición de `Mesh` sin textura (`Mesh/MeshEditing.cpp`) |
 | A7 | Scene: composiciones, capas, luces, claves de luz/cámara, `frameSceneView`, `alignSceneCameraToView`/`alignSceneViewToCamera` | ✅ |
 | A8 | Persistencia: `ProjectDocument` ↔ `EditorScene` (`restoreProject`, `projectDocumentFrom`, la validación `restored*()`) | ✅ |
 
@@ -141,6 +141,21 @@ Por área, en orden de dependencia:
   `testAMarkerLikeWordDoesNotHideThePartner`.
 
 Los ocho tests se comprobaron volviendo a poner la conducta Swift: fallan.
+
+**Encontrado y NO arreglado (decisión pendiente, pinned por test):**
+
+- `connectingVertices` no puede **insertar** una arista: el kernel trata
+  las restricciones como "aristas que el paso de Lawson no puede voltear",
+  sin recuperación de aristas. Unir dos vértices que el ear-clip no unió
+  registra la arista y no cambia ningún triángulo — igual en Swift. Solo
+  protege una arista que ya existe. Arreglarlo es añadir recuperación de
+  aristas (CDT) al kernel: un algoritmo, no un parche. Test:
+  `testAConnectedEdgeIsNeverFlippedAway`.
+- El grid 3×3 de `generated()` (sprite que aún es un quad) declara como
+  outline solo las **cuatro esquinas**, con los cuatro puntos medios de
+  arista encima de él: el validador lo marca (I5). Así lo construye Swift;
+  el render no lo nota, pero el indicador de salud del mesh sí debería. Se
+  deja como está hasta confirmar en el Mac qué muestra la app.
 
 **Rarezas de Swift replicadas a propósito, con nota en el código:** el
 `didSet` de `projectFramesPerSecond` se dispara dos veces ante un valor

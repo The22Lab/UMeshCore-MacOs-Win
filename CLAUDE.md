@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-62 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+63 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -138,7 +138,12 @@ Portado y testeado: `Transform3D2D`, `MatrixUtilities`, `Bone`/`Skeleton`
 (skinning/sanitización/auto-bind), `Skin`/`SkinResolver`, `AnimationCurve`,
 `Keyframe`, `AnimationClip`, `AnimationEvent`, `AnimationLibrary`.
 
-**Pendiente** — 3 conveniencias de tiempo de edición, de `Data/Mesh.swift`:
+**Portadas en Fase 6a** (`Mesh/MeshEditing.cpp`, 11 tests) las tres
+conveniencias que figuraban aquí como pendientes, más el resto de la
+mitad de edición de `Mesh.swift` que no lee texturas. Lo que sigue fuera:
+`tracedHull`/`constrainedToOpaqueArea` (leen alfa) y cuatro helpers
+privados **sin llamantes** en Swift (restos de un triangulador anterior).
+La lista original, para referencia:
 
 - `generated()` / `generatedGrid` — generación procedural de puntos
   interiores para un mesh recién creado.
@@ -1205,8 +1210,18 @@ tests. **Sexto y séptimo bugs de Swift**: los botones Flip / Pose→partner
 pisaba al instante), y `arm_lower_L` **no encontraba** a `arm_lower_R`
 ("_l" de "_lower" se tomaba por marcador).
 
-Lo que falta de la etapa A: la heurística de auto-bind (A2) y **A6, mesh**
-— la única área bloqueada por algo externo (el pipeline de alfa).
+Hecho: **A6a, la mitad de edición de `Mesh` sin textura**
+(`Mesh/MeshEditing.cpp`) — `BoneFit`/`fit`/`insideHullLength` (exacto, no
+muestreado), bind/unbind manual (liga sin pintar), `generated`, insertar/
+borrar vértices con **remap** (lo que mantiene las claves de deform en su
+vértice), aristas y caras manuales, clamps al hull, muestreo baricéntrico.
+11 tests. Dos hallazgos **pinned y sin arreglar** (ver `MIGRATION.md`):
+`connectingVertices` no puede insertar una arista (el kernel no tiene
+recuperación de aristas, también en Swift), y el grid 3×3 declara solo las
+esquinas como outline (el validador lo marca).
+
+Lo que falta de la etapa A: las operaciones de mesh de `SceneManager` y
+auto-bind (A2/A6b), el trazado por alfa (A6c) y `MeshTool` (A6d).
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló
