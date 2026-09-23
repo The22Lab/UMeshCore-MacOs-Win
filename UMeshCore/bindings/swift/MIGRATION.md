@@ -73,9 +73,14 @@ Por área, en orden de dependencia:
 | A3 | Skins, slots, attachments (≈19 miembros) | ✅ |
 | A4 | Constraints: crear/duplicar/borrar/renombrar los 4 tipos, cadenas, targets, valores, `bakePhysicsToKeys`; el **IK builder** (`IKBuilder.swift`, 201 L) | ✅ |
 | A5 | Animación: selección/copia/pegado/movimiento de keyframes, tangentes, interpolación, claves de transform/constraint/draw order/attachment/eventos, transporte (`togglePlayback`, `stepFrames`, rango, `timecode`); los flags de modo de canvas, `leaveSpriteModes` y la escalera de Escape | ✅ |
-| A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar. **Necesita el pipeline de alfa**: se inyecta un muestreador (puntero a función C + `void*`) desde el shell | 🔨 A6a + A6b hechos: la mitad de edición de `Mesh` sin textura (`Mesh/MeshEditing.cpp`) y las ~45 operaciones de mesh/pesos/pincel/auto-bind de `SceneManager` (`EditorSceneMesh.cpp`). A6c hecho: trazado por alfa (`Mesh/MeshTrace.cpp`) leyendo un `AlphaMask` que decodifica el shell. A6d en curso: picking por alfa hecho (`CanvasImagePicking`, `AssetAlphaStore`, sobrecargas de `ToolManager` sin `std::function`); falta `MeshTool` |
+| A6 | Mesh: `MeshTool` (672 L), generar/trazar/resetear, borrar vértices, pintura de pesos, auto-weight, normalizar/espejar/limpiar, con el alfa como datos (`AlphaMask`/`AssetAlphaStore`) | ✅ A6a–A6d: `Mesh/MeshEditing.cpp`, `EditorSceneMesh.cpp`, `Mesh/MeshTrace.cpp`, `CanvasImagePicking`, `Editor/Tools/MeshTool` |
 | A7 | Scene: composiciones, capas, luces, claves de luz/cámara, `frameSceneView`, `alignSceneCameraToView`/`alignSceneViewToCamera` | ✅ |
 | A8 | Persistencia: `ProjectDocument` ↔ `EditorScene` (`restoreProject`, `projectDocumentFrom`, la validación `restored*()`) | ✅ |
+
+**La etapa A está completa.** Todo lo que la interfaz le pide a
+`SceneManager` tiene su equivalente en `EditorScene` (o en `ToolManager` y
+sus ocho tools, para los gestos del canvas), con tests, y todo lo que lee
+una textura la recibe como datos. Lo siguiente es la etapa B.
 
 ### Lo que salió portando (bugs de Swift arreglados, no replicados)
 

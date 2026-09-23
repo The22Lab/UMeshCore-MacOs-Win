@@ -125,7 +125,32 @@ static void testAHitOnArtBeatsABoneNearIt() {
     UM_CHECK(onBone.has_value() && onBone->kind == SelectionTarget::Kind::Bone && onBone->id == bone);
 }
 
+// Framing: a sprite's box is its transformed sheet; the scene's is the
+// union over visible sprites with art.
+static void testFramingBoxesCoverTheVisibleSprites() {
+    EditorScene scene;
+    AssetAlphaStore store;
+    const Uuid asset = Uuid::generate();
+    store.set(asset, Vec2(100, 60), maskWhere([](int, int) { return true; }));
+    const Uuid a = scene.addImage(asset, "a", Vec2(100, 60), Vec2(30, -10), std::nullopt);
+    const Bounds2D box = boundsForImage(*scene.image(a), Vec2(100, 60));
+    UM_CHECK_NEAR(box.min.x, -20.0, 1e-4);
+    UM_CHECK_NEAR(box.max.x, 80.0, 1e-4);
+    UM_CHECK_NEAR(box.min.y, -40.0, 1e-4);
+    UM_CHECK_NEAR(box.max.y, 20.0, 1e-4);
+    const Uuid b = scene.addImage(asset, "b", Vec2(100, 60), Vec2(-200, 100), std::nullopt);
+    const auto all = boundsForScene(scene, store);
+    UM_CHECK(all.has_value());
+    UM_CHECK_NEAR(all->min.x, -250.0, 1e-4);
+    UM_CHECK_NEAR(all->max.x, 80.0, 1e-4);
+    UM_CHECK_NEAR(all->max.y, 130.0, 1e-4);
+    scene.image(b)->isHidden = true;
+    UM_CHECK_NEAR(boundsForScene(scene, store)->min.x, -20.0, 1e-4);
+    UM_CHECK(!boundsForScene(scene, AssetAlphaStore{}).has_value()); // no art loaded: nothing to frame
+}
+
 UM_TEST_MAIN_BEGIN()
+    testFramingBoxesCoverTheVisibleSprites();
     testTheMaskAnswersAsAssetManagerDoes();
     testAClickOnATransparentTexelGoesThrough();
     testTheFrontMostOpaqueTexelWins();

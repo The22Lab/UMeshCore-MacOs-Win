@@ -168,6 +168,79 @@ std::optional<ImageHit> imageHit(Vec2 screenPoint, Vec2 viewSize, const EditorSc
     return nearest;
 }
 
+std::optional<Uuid> hitTestScreen(Vec2 screenPoint, Vec2 viewSize, const EditorScene& scene,
+                                  const AssetAlphaStore& assets, CameraState* camera, float hitScale) {
+    const auto hit = imageHit(screenPoint, viewSize, scene, assets, camera, hitScale);
+    return hit.has_value() ? std::optional<Uuid>(hit->id) : std::nullopt;
+}
+
+std::vector<Uuid> hitTestRect(const ToolUtilities::ScreenRect& rect, Vec2 viewSize, const EditorScene& scene,
+                              const AssetAlphaStore& assets, CameraState* camera) {
+    std::vector<Uuid> hits;
+    for (const SceneImage& image : scene.renderOrderedImages()) {
+        if (image.isHidden) continue;
+        const AssetAlpha* asset = assets.find(image.assetID);
+        if (asset == nullptr || !asset->opaqueBounds.has_value()) continue;
+        const auto geometry = screenGeometry(image, asset->size, scene, viewSize, camera);
+        if (!geometry.has_value()) continue;
+        bool touches = false;
+        for (const Vec2& v : geometry->screenVertices) {
+            if (v.x >= rect.min.x && v.x <= rect.max.x && v.y >= rect.min.y && v.y <= rect.max.y) {
+                touches = true;
+                break;
+            }
+        }
+        if (!touches) {
+            for (const Vec2& p : {(rect.min + rect.max) * 0.5f, rect.min, Vec2(rect.max.x, rect.min.y), rect.max,
+                                  Vec2(rect.min.x, rect.max.y)}) {
+                if (uvAt(p, *geometry).has_value()) {
+                    touches = true;
+                    break;
+                }
+            }
+        }
+        if (touches) hits.push_back(image.id);
+    }
+    return hits;
+}
+
+std::optional<ToolUtilities::MeshProjection> selectedMeshProjection(const EditorScene& scene,
+                                                                    const AssetAlphaStore& assets,
+                                                                    CameraState* camera, Vec2 viewSize,
+                                                                    float hitScale) {
+    if (!scene.selectedImageID.has_value()) return std::nullopt;
+    const SceneImage* image = scene.image(*scene.selectedImageID);
+    if (image == nullptr) return std::nullopt;
+    const AssetAlpha* asset = assets.find(image->assetID);
+    if (asset == nullptr) return std::nullopt;
+    return ToolUtilities::meshProjection(*image, asset->size, scene.skeleton, scene.isMeshOverlayDeformed(),
+                                         scene.meshWeightPaintEnabled, camera, viewSize, hitScale);
+}
+
+Bounds2D boundsForImage(const SceneImage& image, Vec2 assetSize) {
+    Bounds2D bounds = Bounds2D::empty();
+    const auto corners = ToolUtilities::transformedCorners(image, ToolUtilities::localFrame(image.mesh.vertices, assetSize));
+    for (const Vec2& c : corners) bounds.include(c);
+    return bounds;
+}
+
+std::optional<Bounds2D> boundsForScene(const EditorScene& scene, const AssetAlphaStore& assets) {
+    Bounds2D bounds = Bounds2D::empty();
+    bool hasAny = false;
+    for (const SceneImage& image : scene.images) {
+        if (image.isHidden) continue;
+        const AssetAlpha* asset = assets.find(image.assetID);
+        if (asset == nullptr) continue;
+        const Bounds2D b = boundsForImage(image, asset->size);
+        if (b.isValid()) {
+            bounds.include(b.min);
+            bounds.include(b.max);
+            hasAny = true;
+        }
+    }
+    return hasAny ? std::optional<Bounds2D>(bounds) : std::nullopt;
+}
+
 ImageHitTestFn makeImageHitTest(const EditorScene& scene, const AssetAlphaStore& assets, float hitScale) {
     return [&scene, &assets, hitScale](const Vec2& screenPoint, const Vec2& viewSize, CameraState* camera) {
         return imageHit(screenPoint, viewSize, scene, assets, camera, hitScale);

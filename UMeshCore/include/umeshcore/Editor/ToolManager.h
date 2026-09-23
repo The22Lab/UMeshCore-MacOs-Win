@@ -4,57 +4,38 @@
 // what a click/drag/release means (gizmo grab vs. selection change vs. tool
 // action) and forwards it to whichever `Tool` is active.
 //
-// Tools currently wired in (`tools_`): Select, Bone, Move, Rotate, Scale,
-// Skew. NOT wired in, and looked up the same way Swift's own
-// `tools[currentTool]?.onMouseDown(...)` already handles a missing entry
-// (silently does nothing) -- so selecting either of these is a real, safe
-// no-op today, not a crash waiting to happen:
-//   - `.Mesh`: `MeshTool` is not ported. Confirmed (by direct research
-//     against the Swift source and this port's current `EditorScene`/
-//     `ToolUtilities` surface) to be blocked on the asset/alpha pipeline
-//     AND on a family of mesh-editing mutators
-//     (`updateMeshVertex`/`insertMeshVertex`/`deleteSelectedMeshVertices`/
-//     etc.) that don't exist yet -- every one of its sub-modes (Bind Mode,
-//     Weight Paint, hull creation, vertex edit) routes through at least one
-//     of those two gaps. Phase 4/5 scope; see ROADMAP.md.
-//   - `.PhysicsPreview`: NOW PORTED and registered below. The note that
-//     used to sit here deferred it until `EditorScene` owned a live
-//     `PhysicsConstraintSystem`, on the grounds that the override would
-//     otherwise have no consumer. The first half of that was right and the
-//     diagnosis was wrong: a live system would read `baseWorldMatrices()`
-//     exactly as Swift's does and STILL never see an override, because
-//     nothing in the Swift source reads `physicsPreviewOverrides` either
-//     (verified by grep -- three mentions, all of them the declaration and
-//     the two writers). The feature is unfinished upstream, not missing in
-//     translation, so the tool is ported with the same shape and the same
-//     absent effect, documented at length in `PhysicsPreviewTool.h`. It is
-//     registered because the tool is LIVE in the Swift app -- the "y" key
-//     and the constraints menu both select it -- so a shell that switches
-//     to it must find a tool here rather than nothing.
+// All eight tools are wired in (`tools_`): Select, Bone, Mesh, Move,
+// Rotate, Scale, Skew, PhysicsPreview. `.Mesh` was the last to land (Phase
+// 6a), once the alpha pipeline (`AssetAlphaStore`) and the mesh mutators
+// (`EditorSceneMesh.cpp`) existed; with it came everything here that was
+// "MeshTool-scoped": the weight-paint guards on a selection click, the
+// sprite-mesh-mode branch, the mesh marquee, the hovered mesh node, and
+// the real asset size / deform / weight-paint flags for the gizmo test.
+// `.PhysicsPreview` is registered although its pose override has no
+// reader, in Swift either -- see `PhysicsPreviewTool.h`.
 //
-// Also NOT ported, and why: the IK-builder-picking intercept
-// (`scene.ikBuilder?.pickingSlot`) and the Bind-Mode intercept
-// (`scene.isBindingBonesMode`) at the top of `handleMouseDown`/
-// `handleMouseMove` -- neither subsystem is modeled in `EditorScene` (see
-// its file header). The sprite marquee-select branch of `handleMouseDrag`
-// (`updateSelectionRect`, Select tool, not Pose mode) is also not ported:
-// it depends on `ToolUtilities::hitTestRect`, which -- like
-// `hitTestScreen`/`hitTestSelectionTarget` -- needs the same not-yet-built
-// alpha/asset pipeline. The bone marquee (Pose mode) has no such
-// dependency (`ToolUtilities::bonesIntersecting` is pure geometry) and IS
-// ported. The on-iOS haptic feedback call, and the `skewState`/
-// `rotationState` UI-observable mirroring Swift's own `ToolManager` does,
-// are both platform/UI chrome with no model effect and are not ported,
-// consistent with `SkewTool`'s/`RotateTool`'s own choices.
+// Also ported in Phase 6a: the IK-builder picking intercept and hover, the
+// Bind-Mode intercept and hover, and the sprite marquee (`hitTestRect`).
+//
+// ASSETS. The texture side (sizes, alpha) is needed by the sprite marquee,
+// Bind Mode, the mesh gizmo and the mesh tool. It is available only through
+// the `handleMouse*(…, const AssetAlphaStore&, …)` overloads, which expose
+// it for the one event they dispatch. The `ImageHitTestFn` overloads keep
+// working without it, as they always did: whatever needs a texture then
+// finds none and does nothing -- which is what Swift does when
+// `assets.asset(for:)` fails.
+//
+// Not ported: the on-iOS haptic feedback call, and the `skewState`/
+// `rotationState` UI-observable mirroring Swift's own `ToolManager` does --
+// platform/UI chrome with no model effect, consistent with `SkewTool`'s/
+// `RotateTool`'s own choices.
 //
 // One more finding, verified by grepping the whole Swift source tree (no
 // other file references them): `ToolManager.swift`'s own
 // `updateRotationHover`/`handleRotationMouseDown`/`handleRotationMouseDrag`/
 // `syncRotationState` are private methods with ZERO call sites anywhere,
 // including within `ToolManager` itself -- provably dead code, not merely
-// unlikely to run (contrast with the `BoneTool` "Shift resizes the tip"
-// finding, which IS reachable in principle, just not from the current
-// caller). Not ported.
+// unlikely to run. Not ported.
 //
 // Quick-switch (`activateQuickSwitchTool`/`endQuickSwitchOverlay`): the
 // state-setting half is ported; the ~1.1s auto-clear timer is not, since it
@@ -123,8 +104,19 @@ public:
     void handleMouseUp(const ToolInput& input, EditorScene& scene, const AssetAlphaStore& assets, float hitScale,
                        bool touchOptimized);
 
+    // Drop the half-drawn mesh edge, if any (the canvas prompt's Cancel).
+    void cancelPendingMeshEdge(EditorScene& scene);
+
 private:
     std::unordered_map<ActiveTool, std::unique_ptr<Tool>> tools_;
+    const AssetAlphaStore* assets_ = nullptr;
+    struct AssetScope;
+    void setAssets(const AssetAlphaStore* store);
+    std::optional<ToolUtilities::MeshProjection> selectedMeshProjection(const EditorScene& scene, const Vec2& viewSize,
+                                                                        float hitScale) const;
+    Vec2 selectedAssetSize(const EditorScene& scene) const;
+    void updateSelectionRect(const ToolInput& input, EditorScene& scene);
+    void updateMeshSelectionRect(const ToolInput& input, EditorScene& scene, float hitScale);
 
     void updateBoneSelectionRect(const ToolInput& input, EditorScene& scene);
     static std::optional<ToolUtilities::ScreenRect> marqueeRect(const ToolInput& input);

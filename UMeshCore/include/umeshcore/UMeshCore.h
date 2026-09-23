@@ -114,6 +114,7 @@
 #include "umeshcore/Editor/UndoRedoManager.h"
 #include "umeshcore/Editor/Tools/BoneTool.h"
 #include "umeshcore/Editor/Tools/MoveTool.h"
+#include "umeshcore/Editor/Tools/MeshTool.h"
 #include "umeshcore/Editor/Tools/PhysicsPreviewTool.h"
 #include "umeshcore/Editor/Tools/RotateTool.h"
 #include "umeshcore/Editor/Tools/ScaleTool.h"

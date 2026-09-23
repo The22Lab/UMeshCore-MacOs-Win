@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "umeshcore/Editor/AssetAlphaStore.h"
+#include "umeshcore/Editor/Bounds2D.h"
 #include "umeshcore/Editor/CanvasPicking.h"
 #include "umeshcore/Editor/EditorScene.h"
 
@@ -55,6 +56,33 @@ std::optional<Vec2> screenPosition(Vec2 uv, const ScreenGeometry& geometry);
 // displaced by the skin or an attachment key, are not candidates.
 std::optional<ImageHit> imageHit(Vec2 screenPoint, Vec2 viewSize, const EditorScene& scene,
                                  const AssetAlphaStore& assets, CameraState* camera, float hitScale);
+
+// `ToolUtilities.hitTestScreen`: the sprite a click lands on or reaches.
+std::optional<Uuid> hitTestScreen(Vec2 screenPoint, Vec2 viewSize, const EditorScene& scene,
+                                  const AssetAlphaStore& assets, CameraState* camera, float hitScale);
+
+// `ToolUtilities.hitTestRect`: every visible sprite whose drawn SILHOUETTE a
+// rubber band touches -- a drawn vertex inside the band, or the band inside
+// the sprite (a small band dropped on a large sprite catches no vertex).
+// Front first. Art transparent everywhere is not caught.
+std::vector<Uuid> hitTestRect(const ToolUtilities::ScreenRect& rect, Vec2 viewSize, const EditorScene& scene,
+                              const AssetAlphaStore& assets, CameraState* camera);
+
+// `ToolUtilities.meshProjection(scene:assets:...)`: the SELECTED sprite's
+// mesh, as the overlay draws it, projected once per event.
+std::optional<ToolUtilities::MeshProjection> selectedMeshProjection(const EditorScene& scene,
+                                                                    const AssetAlphaStore& assets,
+                                                                    CameraState* camera, Vec2 viewSize,
+                                                                    float hitScale);
+
+// `ToolUtilities.boundsForImage` / `boundsForScene`: the world box a
+// sprite's (transformed) sheet covers, and the union over the visible
+// sprites that have art -- what "frame the selection" / "frame all" fit
+// the camera to. nullopt when no sprite qualifies. Swift reads the size off
+// the Metal texture; here it is the store's `size`, which is the same
+// number (`TextureAsset.size` is the texture's dimensions).
+Bounds2D boundsForImage(const SceneImage& image, Vec2 assetSize);
+std::optional<Bounds2D> boundsForScene(const EditorScene& scene, const AssetAlphaStore& assets);
 
 // `imageHit` bound into the callback the tools take. The references must
 // outlive the returned function.

@@ -38,11 +38,10 @@
 //
 // Fields and methods here are 1:1 with their SceneManager counterparts
 // (same names, same semantics) except where noted IN THE .cpp THAT
-// DEFINES THEM. Not absorbed yet: the mesh-edit and weight-paint
-// OPERATIONS (`MeshTool`, A6) and anything from `CanvasPicking` that needs
-// a loaded texture's alpha. The mode FLAGS are here (A5), so
-// `boneSelectionBecameNonEmpty` now calls `leaveSpriteModes()` as Swift
-// does.
+// DEFINES THEM. As of Phase 6a stage A every model operation the UI calls
+// is here; what reads a texture takes it as data (`AlphaMask` /
+// `AssetAlphaStore`), and the canvas gestures live in `ToolManager` and its
+// tools, `MeshTool` included.
 
 #include <algorithm>
 #include <optional>
@@ -583,6 +582,14 @@ public:
     // store knows and this does not (convention #2).
 
     enum class MeshWeightPaintMode { Add, Subtract, Smooth, Replace, Blur };
+    // What a Mesh-mode click does to the mesh: move nodes, add them (a click
+    // places one, a drag draws an edge), or delete them.
+    enum class MeshEditToolMode { Modify, Create, Delete };
+    MeshEditToolMode meshEditToolMode = MeshEditToolMode::Modify;
+    // The edge being drawn by Create, in world space, for the overlay; both
+    // nullopt when none is.
+    std::optional<Vec2> meshCreateEdgePreviewStart;
+    std::optional<Vec2> meshCreateEdgePreviewEnd;
 
     // Mesh-mode state that model operations read (the purely visual toggles
     // -- show triangles, dim, isolate -- stay with the shell).

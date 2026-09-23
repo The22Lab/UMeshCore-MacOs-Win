@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-66 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+67 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -160,9 +160,15 @@ métricas de gizmos, `GizmoHandle`, `SceneImage`, casi todo
 frame), `ConstraintAnimation`, `EditorScene`, `CanvasPicking::target`,
 `ToolManager` y 6 de las 8 tools (Select, Move, Scale, Skew, Rotate, Bone).
 
-**Pendiente, bloqueado por el pipeline de assets** (Fase 4/5). La raíz
-común: `CanvasPicking.imageHit` necesita muestrear el canal alfa de una
-textura **cargada**, y no hay pipeline de decodificación de imágenes.
+**Cerrado en Fase 6a** todo lo que figuraba aquí como pendiente
+(`hitTestScreen`/`hitTestRect`, el marquee de sprites, `MeshTool`, los
+intercepts de IK builder y Bind Mode): el alfa entra como datos
+(`AssetAlphaStore`) y los mutadores de mesh existen; `boundsForScene`/
+`boundsForImage` también (en `CanvasImagePicking`). La lista
+original, para referencia — **Pendiente, bloqueado por el pipeline de
+assets** (Fase 4/5). La raíz común: `CanvasPicking.imageHit` necesita
+muestrear el canal alfa de una textura **cargada**, y no hay pipeline de
+decodificación de imágenes.
 
 - `hitTestScreen`, `hitTestRect`, `hitTestSelectionTarget`,
   `boundsForScene`, `boundsForImage`.
@@ -1088,7 +1094,7 @@ C ABI sobre todo:
 | Construcción | Sitios | Qué hacer |
 |---|---|---|
 | `std::variant` | 3 (`KeyframeValue`, `GizmoHandle`, `SceneLayerContent`) | Discriminante + accesores `optional<T>` **junto** al variant, no en su lugar: el `std::visit` de C++ conserva la exhaustividad. |
-| typedef de `std::function` | 1 (`ImageHitTestFn`) + 1 parámetro | Sobrecarga con puntero a función C + `void*`. Se decide **junto** con el pipeline de alfa de Fase 2 — es el mismo punto de inyección. |
+| typedef de `std::function` | 1 (`ImageHitTestFn`) + 1 parámetro | **Resuelto en 6a**: el alfa entra como datos (`AssetAlphaStore`) y `ToolManager` tiene sobrecargas que lo toman; Swift nunca construye un `std::function`. Queda el `worldAt` de `LightField::build`, que ningún shell llama aún. |
 | Bases con virtuales puras | 3 (`Tool`, `Constraint`, `CanvasActivity`) | Nada: el shell las **consume**, no las implementa. |
 | Accesores que devuelven referencia | 14 | Por valor los que lee una vista. Swift no da garantía de lifetime, y este port ya se llevó dos mordiscos de esa clase **en C++**. |
 
@@ -1253,7 +1259,24 @@ alcance medido al arte, no a la hoja), y los `alphaAt`/`opaqueBounds` de
 construir un `std::function`**, que era el último bloqueante de interop de
 la auditoría. 6 tests.
 
-Lo que falta de la etapa A: `MeshTool` (A6d).
+Hecho: **A6d, `MeshTool`** (`Editor/Tools/MeshTool.h/.cpp`) y con él lo
+que `ToolManager` tenía marcado como "MeshTool-scoped": los intercepts y el
+hover del IK builder y de Bind Mode, los guardas de pintura en un clic de
+selección, la rama de modo-sprite, los dos marquees (sprites por
+`hitTestRect`, nodos del mesh) y el nodo bajo el puntero. Las **ocho**
+tools están registradas. El store de alfa llega a las tools solo por las
+sobrecargas `handleMouse*(…, const AssetAlphaStore&, …)`, y solo durante
+el evento que despachan. 8 tests de gestos a través de `ToolManager`;
+entre ellos, que el clic que elige un sprite **no** le pone un nodo, que un
+toque de Pencil que se mueve 2 puntos es un clic y no una arista, y que el
+doble clic que arma un hueso **devuelve** la marca que dejó su primer clic
+(los dos fallan con la guarda quitada).
+
+**La etapa A está completa**: todo lo que la interfaz le pide a
+`SceneManager` existe en el core, testeado. Siete bugs de Swift arreglados
+por el camino, cuatro hallazgos fijados por test y sin arreglar (decisión
+del usuario), todo en `MIGRATION.md`. Lo siguiente es la **etapa B**: el
+`SceneManager` Swift como adaptador sobre `EditorScene`.
 
 **Bloqueante que sigue en pie**: los 4 tests de
 `UMeshCoreInteropSmokeTests.swift` tienen que pasar en el Mac (se arregló
