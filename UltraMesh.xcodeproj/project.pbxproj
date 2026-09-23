@@ -12,14 +12,14 @@
 			containerPortal = 8C4F68A32F7C6FBC00BBE817 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 8C4F68AA2F7C6FBC00BBE817;
-			remoteInfo = "UltraMesh 2d animation";
+			remoteInfo = UltraMesh;
 		};
 		8C4F68C32F7C6FBE00BBE817 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 8C4F68A32F7C6FBC00BBE817 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 8C4F68AA2F7C6FBC00BBE817;
-			remoteInfo = "UltraMesh 2d animation";
+			remoteInfo = UltraMesh;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -602,7 +602,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = "UltraMesh 2d animation";
+				TEST_TARGET_NAME = UltraMesh;
 			};
 			name = Debug;
 		};
@@ -622,7 +622,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = "UltraMesh 2d animation";
+				TEST_TARGET_NAME = UltraMesh;
 			};
 			name = Release;
 		};
