@@ -50,7 +50,7 @@ cmake --build build -j4
 cd build && ctest --output-on-failure
 ```
 
-53 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
+54 binarios de test, 100% en verde. **Nunca dejes la suite en rojo.**
 
 ---
 
@@ -301,17 +301,63 @@ No portado, y no por olvido: `smoothAutoTangent` ya está **borrado** en el
 Swift — su propio comentario explica que era la segunda respuesta, y
 discrepante, a lo que contesta `AnimationCurve::autoSlope`.
 
+**`Editor/HierarchyDisplay.h/.cpp`** ← la lógica no-vista de
+`HierarchyView.swift` (1087 L): `displayHierarchyIDs()` (que en realidad
+vive en `SceneManager`, `Data/SceneManager.swift:3868` — es lógica de
+valor pura sobre los mismos tres inputs que ya recibe este archivo, no
+mutación de escena, así que pertenece aquí), `boneLineage`, `boneDepth`,
+`isHiddenByCollapsedAncestor`, y el constructor del árbol `display`
+entero. 25 tests.
+
+Tercera mordida de la deuda del timeline/hierarchy (Riesgo #6), y la que
+cierra el panel de jerarquía. "Inyectar lo necesario" (convención #2): toda
+función recibe `hierarchyItems`/`images`/`skeleton` directamente, nunca un
+`SceneManager` — el mismo reparto que ya usa `EditorScene`, y el mismo que
+`GraphViewport.h` ya hizo entre "lo que el artista está mirando" (estado de
+vista, inyectado como parámetro: `collapsedBoneIDs`/`expandedSections`) y
+"cómo se construye el árbol" (aquí).
+
+Una adición deliberada sobre el Swift: `boneLineage`, `boneDepth` e
+`isHiddenByCollapsedAncestor` recorren la cadena de padres de un hueso con
+un `while let` sin límite. `EditorScene::depthOf` —el mismo recorrido, para
+otro llamante— ya capa ese paseo en 64 saltos como guarda contra una
+cadena de padres corrupta o cíclica llegando a la UI como un bucle
+infinito en vez de un árbol con mala pinta. Se aplica el mismo límite aquí,
+por la misma razón, siguiendo ese precedente en vez de inventar uno nuevo.
+Un test construye dos huesos que se apadrinan mutuamente y confirma que el
+recorrido para en 64, no que cuelga.
+
+Dos asimetrías que el port conserva y testea, porque no son intuitivas:
+**una fila de hueso permanece visible cuando es ELLA la que está
+colapsada** —colapsar oculta sus hijos, no a sí misma— pero **una imagen
+ligada a un hueso se oculta cuando el hueso al que está ligada está
+colapsado**, no solo cuando lo está un ancestro — la imagen se dibuja AL
+NIVEL de ese hueso, no debajo. Y `displayHierarchyIDs`: un hueso que existe
+en el esqueleto pero no tiene `HierarchyItem` propio saca **todo su
+subárbol** del recorrido en árbol — pero lo que cuelga de él y sí tiene
+`HierarchyItem` no desaparece, cae al final en orden autorado en vez de
+perderse del panel.
+
+El test grande (`testFullTreeMatchesTheHandDerivedShape`) construye un rig
+de siete nodos (dos ramas, un sprite ligado, uno suelto, un constraint) y
+afirma las doce filas completas —profundidad, líneas de continuidad,
+`showsDescendantContinuation`— contra una traza calculada **a mano sobre
+papel**, siguiendo la misma pasada hacia atrás que hace el propio
+algoritmo, no contra lo que produjo el port al ejecutarse.
+
 Falta de la deuda SwiftUI: de `TimelineView.swift` (4326 L) queda lo que es
 cuerpo de vista de verdad (gestos, Paths, colores, llamadas a
-`sceneManager`).
+`sceneManager`); de `HierarchyView.swift` (1087 L) queda el resto: cómo
+dibuja cada fila, drag-and-drop, el diálogo de borrado, el foco del campo
+de renombrado.
 `ringFrame` y las constantes de geometría que el mesh builder del gizmo
 necesita ya están extraídas a `Render/SceneGizmoLayout.h` (Fase 4, pieza
-5). Lo demás sigue dentro de las vistas:
-`SceneGizmoOverlay.swift` (1732 L) y `TimelineView.swift` (4326 L) tienen
-matemática real de hit-testing y curvas **dentro de cuerpos de vista
-SwiftUI**. Hay que extraerla a UMeshCore *antes* de que la UI de Windows
-necesite lógica equivalente — portar desde un cuerpo de vista SwiftUI
-directamente es mucho más arriesgado que extraer primero en el Mac.
+5). Lo que queda de matemática real de hit-testing y curvas **dentro de
+cuerpos de vista SwiftUI** sigue en `SceneGizmoOverlay.swift` (lo que no se
+sacó ya) y `TimelineView.swift`. Hay que extraerla a UMeshCore *antes* de
+que la UI de Windows necesite lógica equivalente — portar desde un cuerpo
+de vista SwiftUI directamente es mucho más arriesgado que extraer primero
+en el Mac.
 
 ### Fase 3 — Serialización ✅
 

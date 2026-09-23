@@ -1937,6 +1937,70 @@ Special-case validation needs, carried over into each phase's own tests:
    2, file I/O after Phase 3, the DirectX renderer after Phase 4, export UI
    after Phase 5.
 
+## Phase 2 continued -- the timeline/hierarchy/gizmo SwiftUI debt (Risk #6)
+
+Named Risk #6, below, is `SceneGizmoOverlay.swift` (1,732 L) and
+`TimelineView.swift` (4,326 L) holding real hit-testing and curve math
+inside SwiftUI view bodies. This entry did not get written when the first
+five pieces of it landed; recorded now, catching up, rather than left
+silently absent from the file whose whole job is to carry this reasoning.
+
+Landed, each its own header/source pair with its own tests, the detailed
+per-file rationale in each file's own header comment and in `CLAUDE.md`'s
+Phase 2 write-up rather than restated here: `Editor/SceneGizmoState.h`
+(the gizmo's shape -- per-tool basis, stabilised camera, projected axes/
+rings/planes), `Editor/SceneGizmoDrag.h` (a layer's hit-test and drag),
+`Editor/SceneLightGizmo.h` (a light's and the shot camera's drag),
+`Editor/GraphViewport.h` (the Graph editor's value<->pixel mapping, fixing
+a real bug: the vertical range used to be derived from keyframe VALUES,
+which a cubic is not bounded by), `Editor/TimelineGraphMath.h` (the curve
+editor: tangents, control points, hit-testing, all routed through
+`AnimationCurve::segment` so the graph draws the curve that actually
+plays).
+
+**`Editor/HierarchyDisplay.h/.cpp`** ports the non-view logic of
+`HierarchyView.swift` (1,087 L): `displayHierarchyIDs()` (which the Swift
+source keeps on `SceneManager`, `Data/SceneManager.swift:3868`, even
+though it is pure value logic over `hierarchyItems`/`images`/`skeleton`
+and mutates nothing -- it belongs with the rest of this file's logic, not
+with scene mutation), `boneLineage`, `boneDepth`,
+`isHiddenByCollapsedAncestor`, and the `display` tree builder that turns
+all of it into the rows the outliner draws.
+
+Same "inject what's needed" split `GraphViewport.h` already made between
+view state and pure mapping: `collapsedBoneIDs`/`expandedSections` are
+`@State` in the Swift view -- the artist's last click, not project data --
+and arrive as plain parameters rather than living in this file.
+
+One addition beyond the Swift source, not a silent one:
+`boneLineage`/`boneDepth`/`isHiddenByCollapsedAncestor` each walk a bone's
+parent chain with Swift's unbounded `while let`. `EditorScene::depthOf` --
+the identical walk, ported earlier for a different caller -- already caps
+that walk at 64 hops as a guard against a corrupt or cyclic parent chain
+reaching the UI as an infinite loop instead of a wrong-looking tree. The
+same cap is applied here, matching that precedent rather than inventing a
+second one; a test builds two bones that parent each other and asserts the
+walk stops at 64 rather than hanging.
+
+Two asymmetries the port carries forward exactly because they are not the
+first guess: a BONE row stays visible when it is the one collapsed --
+collapsing hides its children, not itself -- but a sprite BOUND to a bone
+is hidden when that bone itself is collapsed, not only by a collapsed
+ancestor, because the sprite sits at the bone's own level rather than
+below it. And in `displayHierarchyIDs`, a bone present in the skeleton but
+missing its own `HierarchyItem` drops its entire subtree from the tree
+walk -- but anything under it that DOES have a `HierarchyItem` is not
+lost, it falls to an authored-order tail rather than vanishing from the
+panel.
+
+Tested: `tests/HierarchyDisplayTests.cpp` (25 tests). The central one
+builds a seven-node fixture (two branches, a bound sprite, an unbound one,
+one constraint) and asserts all twelve resulting rows -- depth, tree-line
+continuation levels, descendant-continuation flag -- against a trace
+worked out BY HAND on paper, walking the same backward pass the algorithm
+itself uses, before the code was run even once; it passed on the first
+run. All 54 test binaries pass.
+
 ## Named risks
 
 1. **`SceneManager.swift` god-object** (7,376 lines, 87 `@Published`
